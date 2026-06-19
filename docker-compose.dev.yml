@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: agents44
+      POSTGRES_PASSWORD: agents44
+      POSTGRES_DB: agents44
+    ports:
+      - "5432:5432"
+    volumes:
+      - agents44_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agents44"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  agents44_pgdata:

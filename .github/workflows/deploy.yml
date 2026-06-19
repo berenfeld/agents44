@@ -1,0 +1,63 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Lint and typecheck frontend
+        run: npm run validate
+        working-directory: frontend
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+        env:
+          REACT_APP_API_URL: /api
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: frontend/dist
+      - name: Rsync to server
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avzr --delete
+          path: ./
+          remote_path: /opt/agents44/
+          remote_host: ${{ secrets.DEPLOY_HOST }}
+          remote_user: ${{ secrets.DEPLOY_USER }}
+          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Install dependencies, migrate, restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/agents44
+            /opt/agents44/venv/bin/pip install -r backend/requirements.txt
+            cd /opt/agents44/backend
+            /opt/agents44/venv/bin/alembic upgrade head
+            systemctl restart agents44
