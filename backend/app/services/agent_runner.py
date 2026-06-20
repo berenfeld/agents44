@@ -2,9 +2,11 @@ import json
 import logging
 import os
 import queue
+import shlex
 import shutil
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +27,72 @@ _run_queue: queue.Queue = queue.Queue()
 _worker_started = False
 
 RUN_FAILED_MESSAGE = "Agent run failed"
+LOG_STDERR_MAX = 4000
+
+
+def _truncate_text(text: str, max_chars: int = LOG_STDERR_MAX) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}...[truncated {len(text) - max_chars} chars]"
+
+
+def _format_command_line(cmd: list[str], *, prompt_path: str | None = None) -> str:
+    display_cmd = list(cmd)
+    if prompt_path and len(display_cmd) >= 3 and display_cmd[0] == "claude" and display_cmd[1] == "-p":
+        prompt_len = len(display_cmd[2])
+        display_cmd[2] = f"@{prompt_path} ({prompt_len} chars)"
+    return " ".join(shlex.quote(arg) for arg in display_cmd)
+
+
+def _run_start_context(
+    run: SystemAgentRun,
+    agent: SystemAgent,
+    *,
+    cmd: list[str],
+    timeout_seconds: int,
+    mcp_config_path: Path,
+    cwd: str,
+    payload: dict | None,
+) -> dict:
+    return {
+        "run_id": run.id,
+        "agent_id": agent.id,
+        "agent_name": agent.name,
+        "department": agent.department,
+        "model": agent.model,
+        "trigger_source": run.trigger_source.value,
+        "timeout_seconds": timeout_seconds,
+        "cwd": cwd,
+        "run_dir": run.run_dir,
+        "prompt_path": run.prompt_path,
+        "log_path": run.log_path,
+        "mcp_config_path": str(mcp_config_path),
+        "has_payload": payload is not None,
+        "command": _format_command_line(cmd, prompt_path=run.prompt_path),
+    }
+
+
+def _log_run_start(context: dict) -> None:
+    logger.info("AGENT_RUN_START %s", json.dumps(context, default=str))
+
+
+def _log_run_finish(context: dict) -> None:
+    serialized = json.dumps(context, default=str)
+    status = context.get("status")
+    if status in {RunStatus.failed.value, "failed"} or context.get("exit_code") not in (0, None):
+        logger.error("AGENT_RUN_END %s", serialized)
+    else:
+        logger.info("AGENT_RUN_END %s", serialized)
+
+
+def _write_run_log_start(log_path: Path, context: dict) -> None:
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        log_file.write("=== RUN START ===\n")
+        for key, value in context.items():
+            if key == "command":
+                continue
+            log_file.write(f"{key}: {value}\n")
+        log_file.write(f"\n$ {context['command']}\n\n")
 
 
 def _append_message_blocks(parts: list[str], message: dict) -> None:
@@ -72,17 +140,36 @@ def format_claude_stream_transcript(stdout: str) -> str:
     return "".join(parts).strip()
 
 
-def _write_run_log(
+def _write_run_log_finish(
     log_path: Path,
-    cmd: list[str],
+    *,
+    returncode: int,
     stdout: str,
     stderr: str,
-    returncode: int,
+    duration_seconds: float,
+    status: RunStatus,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    estimated_cost_usd: float | None = None,
+    error_message: str | None = None,
+    extra_notes: str | None = None,
 ) -> None:
-    with open(log_path, "w", encoding="utf-8") as log_file:
-        log_file.write(f"$ {' '.join(cmd[:4])} ...\n\n")
-        log_file.write(f"=== EXIT CODE ===\n{returncode}\n\n")
-        log_file.write("=== STDOUT ===\n")
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write("=== RUN END ===\n")
+        log_file.write(f"status: {status.value}\n")
+        log_file.write(f"exit_code: {returncode}\n")
+        log_file.write(f"duration_seconds: {duration_seconds:.3f}\n")
+        if tokens_in is not None:
+            log_file.write(f"tokens_in: {tokens_in}\n")
+        if tokens_out is not None:
+            log_file.write(f"tokens_out: {tokens_out}\n")
+        if estimated_cost_usd is not None:
+            log_file.write(f"estimated_cost_usd: {estimated_cost_usd}\n")
+        if error_message:
+            log_file.write(f"error_message: {error_message}\n")
+        if extra_notes:
+            log_file.write(f"notes: {extra_notes}\n")
+        log_file.write("\n=== STDOUT ===\n")
         log_file.write(stdout if stdout else "(empty)\n")
         log_file.write("\n=== STDERR ===\n")
         log_file.write(stderr if stderr else "(empty)\n")
@@ -130,14 +217,36 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
     return "\n".join(lines)
 
 
-def _mark_run_failed(run: SystemAgentRun, log_path: Path | None, detail: str | None = None) -> None:
+def _mark_run_failed(
+    run: SystemAgentRun,
+    log_path: Path | None,
+    detail: str | None = None,
+    *,
+    agent: SystemAgent | None = None,
+    duration_seconds: float | None = None,
+) -> None:
     run.status = RunStatus.failed
     run.error_message = RUN_FAILED_MESSAGE
     run.finished_at = datetime.now(timezone.utc)
     db.session.commit()
     if log_path and detail:
         with open(log_path, "a", encoding="utf-8") as log_file:
-            log_file.write(f"\n{detail}\n")
+            log_file.write("\n=== RUN END ===\n")
+            log_file.write(f"status: {RunStatus.failed.value}\n")
+            if duration_seconds is not None:
+                log_file.write(f"duration_seconds: {duration_seconds:.3f}\n")
+            log_file.write(f"notes: {detail}\n")
+    finish_context = {
+        "run_id": run.id,
+        "agent_id": run.agent_id,
+        "agent_name": agent.name if agent else None,
+        "status": RunStatus.failed.value,
+        "error_message": RUN_FAILED_MESSAGE,
+        "detail": detail,
+    }
+    if duration_seconds is not None:
+        finish_context["duration_seconds"] = round(duration_seconds, 3)
+    _log_run_finish(finish_context)
 
 
 def _finalize_run(
@@ -194,7 +303,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         safe_path(paths["prompt_path"]).write_text(prompt, encoding="utf-8")
 
         if not shutil.which("claude"):
-            _mark_run_failed(run, log_path, "Claude CLI is not installed")
+            _mark_run_failed(run, log_path, "Claude CLI is not installed", agent=agent)
             maybe_notify_run(agent.name, run.id, RunStatus.failed.value, RUN_FAILED_MESSAGE)
             return
 
@@ -241,10 +350,24 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         ]
 
         timeout_seconds = agent.timeout_seconds or 300
+        cwd = str(workspace_root())
+        start_context = _run_start_context(
+            run,
+            agent,
+            cmd=cmd,
+            timeout_seconds=timeout_seconds,
+            mcp_config_path=mcp_config_path,
+            cwd=cwd,
+            payload=payload,
+        )
+        _write_run_log_start(log_path, start_context)
+        _log_run_start(start_context)
+        started_monotonic = time.monotonic()
+
         try:
             result = subprocess.run(
                 cmd,
-                cwd=str(workspace_root()),
+                cwd=cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -253,28 +376,83 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            _write_run_log(log_path, cmd, exc.stdout or "", exc.stderr or "", -1)
-            with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write(f"\nAgent run timed out after {timeout_seconds} seconds\n")
+            duration_seconds = time.monotonic() - started_monotonic
+            timeout_note = f"Agent run timed out after {timeout_seconds} seconds"
+            _write_run_log_finish(
+                log_path,
+                returncode=-1,
+                stdout=exc.stdout or "",
+                stderr=exc.stderr or "",
+                duration_seconds=duration_seconds,
+                status=RunStatus.failed,
+                error_message=RUN_FAILED_MESSAGE,
+                extra_notes=timeout_note,
+            )
+            _log_run_finish(
+                {
+                    "run_id": run.id,
+                    "agent_id": agent.id,
+                    "agent_name": agent.name,
+                    "status": RunStatus.failed.value,
+                    "exit_code": -1,
+                    "duration_seconds": round(duration_seconds, 3),
+                    "timeout_seconds": timeout_seconds,
+                    "error_message": RUN_FAILED_MESSAGE,
+                    "detail": timeout_note,
+                    "stderr": _truncate_text(exc.stderr or ""),
+                }
+            )
             _finalize_run(run, agent, RunStatus.failed, RUN_FAILED_MESSAGE, None, None, None)
             return
 
-        _write_run_log(log_path, cmd, result.stdout or "", result.stderr or "", result.returncode)
+        duration_seconds = time.monotonic() - started_monotonic
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
 
         status = RunStatus.success
         error_message = None
         if result.returncode != 0:
             status = RunStatus.failed
             error_message = RUN_FAILED_MESSAGE
-            with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write(f"\nClaude CLI exited with code {result.returncode}\n")
 
-        tokens_in, tokens_out = parse_usage_from_claude_output(result.stdout or "")
+        tokens_in, tokens_out = parse_usage_from_claude_output(stdout)
         estimated_cost = compute_estimated_cost(agent.model, tokens_in, tokens_out)
+        exit_note = None
+        if result.returncode != 0:
+            exit_note = f"Claude CLI exited with code {result.returncode}"
+
+        _write_run_log_finish(
+            log_path,
+            returncode=result.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            duration_seconds=duration_seconds,
+            status=status,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            estimated_cost_usd=estimated_cost,
+            error_message=error_message,
+            extra_notes=exit_note,
+        )
+        _log_run_finish(
+            {
+                "run_id": run.id,
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "status": status.value,
+                "exit_code": result.returncode,
+                "duration_seconds": round(duration_seconds, 3),
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "estimated_cost_usd": estimated_cost,
+                "error_message": error_message,
+                "stderr": _truncate_text(stderr) if stderr else None,
+            }
+        )
         _finalize_run(run, agent, status, error_message, tokens_in, tokens_out, estimated_cost)
 
 
-def _fail_run_from_worker(run_id: int) -> None:
+def _fail_run_from_worker(run_id: int, detail: str | None = None) -> None:
     from app import get_app
 
     app = get_app()
@@ -287,6 +465,16 @@ def _fail_run_from_worker(run_id: int) -> None:
         run.error_message = RUN_FAILED_MESSAGE
         run.finished_at = datetime.now(timezone.utc)
         db.session.commit()
+        _log_run_finish(
+            {
+                "run_id": run.id,
+                "agent_id": run.agent_id,
+                "agent_name": agent.name if agent else None,
+                "status": RunStatus.failed.value,
+                "error_message": RUN_FAILED_MESSAGE,
+                "detail": detail or "Run worker failed unexpectedly",
+            }
+        )
         if agent:
             maybe_notify_run(agent.name, run.id, RunStatus.failed.value, RUN_FAILED_MESSAGE)
 
@@ -303,10 +491,10 @@ def _worker_loop() -> None:
                 payload = None
             with _run_lock:
                 _execute_run(run_id, payload)
-        except Exception:
+        except Exception as exc:
             logger.exception("Run worker failed for run %s", item)
             run_id = item["run_id"] if isinstance(item, dict) else item
-            _fail_run_from_worker(run_id)
+            _fail_run_from_worker(run_id, detail=str(exc))
         finally:
             _run_queue.task_done()
 
@@ -343,5 +531,19 @@ def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None)
     )
     db.session.add(run)
     db.session.commit()
+    logger.info(
+        "AGENT_RUN_QUEUED %s",
+        json.dumps(
+            {
+                "run_id": run.id,
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "trigger_source": source.value,
+                "initial_status": run.status.value,
+                "queued_behind_active_run": pending_exists,
+            },
+            default=str,
+        ),
+    )
     _run_queue.put({"run_id": run.id, "payload": payload})
     return run
