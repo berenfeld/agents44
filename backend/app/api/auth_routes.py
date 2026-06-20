@@ -1,6 +1,14 @@
 from flask import Blueprint, jsonify, request
 
-from app.auth import auth_callback, auth_google, auth_logout, auth_me, login_required
+from app.auth import (
+    auth_callback,
+    auth_google,
+    auth_logout,
+    auth_me,
+    dev_login,
+    dev_login_config,
+    login_required,
+)
 from app.errors import api_endpoint
 from app.extensions import db
 from app.models import SystemParam
@@ -33,6 +41,18 @@ def me():
 @api_endpoint
 def logout():
     return auth_logout()
+
+
+@auth_bp.get("/dev-login/config")
+@api_endpoint
+def dev_login_config_route():
+    return dev_login_config()
+
+
+@auth_bp.post("/dev-login")
+@api_endpoint
+def dev_login_route():
+    return dev_login()
 
 
 @params_bp.get("")

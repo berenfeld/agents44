@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from app.env_file import PROJECT_ROOT, load_env_file
 
@@ -16,11 +17,18 @@ def _resolve_project_path(value: str | None, default: Path) -> str:
     return str(path.resolve())
 
 
+def _database_url() -> str:
+    user = os.getenv("PSQL_USER", "agents44")
+    password = os.getenv("PSQL_PASSWORD", "agents44")
+    host = os.getenv("PSQL_HOST", "localhost")
+    port = os.getenv("PSQL_PORT", "5432")
+    db = os.getenv("PSQL_DB", "agents44")
+    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db}"
+
+
 class Config:
     SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret")
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL", "postgresql://agents44:agents44@localhost:5432/agents44"
-    )
+    SQLALCHEMY_DATABASE_URI = _database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WORKSPACE_PATH = _resolve_project_path(os.getenv("WORKSPACE_PATH"), PROJECT_ROOT / ".workspace")
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -33,6 +41,8 @@ class Config:
     SMTP_USER = os.getenv("SMTP_USER", "")
     SMTP_APP_PASSWORD = os.getenv("SMTP_APP_PASSWORD", "")
     ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@catch44.co.il")
+    DEV_LOGIN_EMAIL = os.getenv("DEV_LOGIN_EMAIL", "").strip()
+    DEV_LOGIN_PASSWORD = os.getenv("DEV_LOGIN_PASSWORD", "")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "")
     FLASK_ENV = os.getenv("FLASK_ENV", "")
@@ -40,4 +50,5 @@ class Config:
     SUPPORTED_MODELS: list[str] = []
     DEFAULT_MODEL_RESOLVED: str = ""
     RUNTIME_DIR = _resolve_project_path(os.getenv("RUNTIME_DIR"), PROJECT_ROOT / ".dev" / "runtime")
+    LOG_DIR = _resolve_project_path(os.getenv("LOG_DIR"), PROJECT_ROOT / ".dev" / "logs")
     MCP_PORT = int(os.getenv("MCP_PORT", "5001"))

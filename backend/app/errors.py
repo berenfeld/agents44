@@ -43,17 +43,34 @@ def api_endpoint(view_func):
             response = _coerce_response(result)
             return log_api_response(response)
         except APIClientError as exc:
+            logger.error(
+                "API client error on %s %s: %s (status=%s)",
+                request.method,
+                request.path,
+                exc.message,
+                exc.status_code,
+            )
             response = make_response(jsonify({"error": exc.message}), exc.status_code)
             return log_api_response(response)
         except ValidationError as exc:
+            logger.error(
+                "Validation error on %s %s: %s",
+                request.method,
+                request.path,
+                exc.messages,
+            )
             response = make_response(jsonify({"error": exc.messages}), 400)
             return log_api_response(response)
         except FileNotFoundError:
+            logger.error("Not found on %s %s", request.method, request.path)
             response = make_response(jsonify({"error": "Not found"}), 404)
             return log_api_response(response)
         except HTTPException as exc:
-            response = make_response(
-                jsonify({"error": exc.description or exc.name}),
+            logger.error(
+                "HTTP error on %s %s: %s (status=%s)",
+                request.method,
+                request.path,
+                exc.description or exc.name,
                 exc.code or 500,
             )
             return log_api_response(response)

@@ -10,6 +10,7 @@ venv/
 backend/.venv/
 node_modules/
 frontend/dist/
+dist/
 .workspace/
 workspace/
 *.log

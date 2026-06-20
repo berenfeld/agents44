@@ -60,7 +60,13 @@ def log_api_response(response):
             "body": resp_body,
         }
     )
-    logger.info("RES %s", json.dumps(payload, default=str))
+    serialized = json.dumps(payload, default=str)
+    if response.status_code >= 500:
+        logger.error("RES %s", serialized)
+    elif response.status_code >= 400:
+        logger.error("RES %s", serialized)
+    else:
+        logger.info("RES %s", serialized)
     return response
 
 

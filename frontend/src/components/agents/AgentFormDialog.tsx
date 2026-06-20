@@ -100,9 +100,10 @@ export function AgentFormDialog({
       <form
         className="space-y-4"
         onSubmit={handleSubmit(async (values) => {
-          const timeoutSeconds = parseTimeoutInput(values.timeout);
+          const { timeout, ...rest } = values;
+          const timeoutSeconds = parseTimeoutInput(timeout);
           if (timeoutSeconds === null) return;
-          await onSubmit({ ...values, crond: values.crond || null, timeout_seconds: timeoutSeconds });
+          await onSubmit({ ...rest, crond: values.crond || null, timeout_seconds: timeoutSeconds });
           onOpenChange(false);
         })}
       >
@@ -151,8 +152,10 @@ export function AgentFormDialog({
           {errors.crond && <p className="text-sm text-red-600">{errors.crond.message}</p>}
         </div>
         <div>
-          <Label htmlFor="timeout">Timeout (mm:ss)</Label>
-          <Input id="timeout" placeholder="5:00" className="w-32 font-mono" {...register("timeout")} />
+          <Label htmlFor="timeout" className="mb-1 block">
+            Timeout (mm:ss)
+          </Label>
+          <Input id="timeout" placeholder="5:00" className="font-mono" {...register("timeout")} />
           {errors.timeout && <p className="text-sm text-red-600">{errors.timeout.message}</p>}
         </div>
         <div className="flex items-center justify-between">

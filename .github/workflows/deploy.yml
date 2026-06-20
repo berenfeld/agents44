@@ -4,51 +4,105 @@ on:
   push:
     branches: [main]
 
+env:
+  DEPLOY_DIR: /tmp/agents44-deploy
+  APP_DIR: /opt/agents44
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
+
       - name: Lint and typecheck frontend
         run: npm run validate
         working-directory: frontend
+
+      - name: Set app version
+        id: version
+        run: echo "value=$(bash scripts/git-version.sh)" >> "$GITHUB_OUTPUT"
+
       - name: Build frontend
         run: npm run build
         working-directory: frontend
         env:
           REACT_APP_API_URL: /api
+          REACT_APP_VERSION: ${{ steps.version.outputs.value }}
+
+      - name: Package frontend
+        run: |
+          mkdir -p dist
+          rm -f dist/frontend.zip
+          cd frontend/dist
+          zip -r ../../dist/frontend.zip .
+
+      - name: Package backend
+        run: |
+          mkdir -p dist
+          rm -f dist/backend.zip
+          cd backend
+          zip -r ../dist/backend.zip \
+            app/ \
+            alembic/ \
+            scripts/ \
+            wsgi.py \
+            requirements.txt \
+            alembic.ini
+
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: frontend/dist
+          name: deploy-packages
+          path: |
+            dist/frontend.zip
+            dist/backend.zip
+            deploy/
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: frontend/dist
-      - name: Rsync to server
-        uses: burnett01/rsync-deployments@7.0.1
+          name: deploy-packages
+
+      - name: Upload to server
+        uses: appleboy/scp-action@v1.0.0
         with:
-          switches: -avzr --delete
-          path: ./
-          remote_path: /opt/agents44/
-          remote_host: ${{ secrets.DEPLOY_HOST }}
-          remote_user: ${{ secrets.DEPLOY_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
-      - name: Install dependencies, migrate, restart
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: dist/frontend.zip,dist/backend.zip,deploy/
+          target: ${{ env.DEPLOY_DIR }}
+
+      - name: Stop backend
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: sudo bash ${{ env.DEPLOY_DIR }}/deploy/scripts/stop-backend.sh
+
+      - name: Stop frontend
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: sudo bash ${{ env.DEPLOY_DIR }}/deploy/scripts/stop-frontend.sh
+
+      - name: Install deploy configs and scripts
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -56,8 +110,50 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -euo pipefail
-            cd /opt/agents44
-            /opt/agents44/venv/bin/pip install -r backend/requirements.txt
-            cd /opt/agents44/backend
-            /opt/agents44/venv/bin/alembic upgrade head
-            systemctl restart agents44
+            sudo mkdir -p ${{ env.APP_DIR }}/deploy
+            sudo cp -a ${{ env.DEPLOY_DIR }}/deploy/nginx ${{ env.DEPLOY_DIR }}/deploy/systemd ${{ env.DEPLOY_DIR }}/deploy/scripts ${{ env.APP_DIR }}/deploy/
+            sudo cp ${{ env.DEPLOY_DIR }}/deploy/gunicorn.conf.py ${{ env.APP_DIR }}/deploy/gunicorn.conf.py
+            sudo chmod +x ${{ env.APP_DIR }}/deploy/scripts/*.sh
+            sudo chown -R agents44:agents44 ${{ env.APP_DIR }}/deploy
+
+      - name: Deploy frontend package
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            sudo rm -rf ${{ env.APP_DIR }}/frontend/dist
+            sudo mkdir -p ${{ env.APP_DIR }}/frontend/dist
+            sudo unzip -oq ${{ env.DEPLOY_DIR }}/dist/frontend.zip -d ${{ env.APP_DIR }}/frontend/dist
+            sudo chown -R agents44:agents44 ${{ env.APP_DIR }}/frontend
+
+      - name: Deploy backend package
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            sudo rm -rf ${{ env.APP_DIR }}/backend
+            sudo mkdir -p ${{ env.APP_DIR }}/backend
+            sudo unzip -oq ${{ env.DEPLOY_DIR }}/dist/backend.zip -d ${{ env.APP_DIR }}/backend
+            sudo chown -R agents44:agents44 ${{ env.APP_DIR }}/backend
+
+      - name: Start backend
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: sudo bash ${{ env.APP_DIR }}/deploy/scripts/start-backend.sh
+
+      - name: Start frontend
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: sudo bash ${{ env.APP_DIR }}/deploy/scripts/start-frontend.sh

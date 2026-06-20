@@ -1,0 +1,17 @@
+[Unit]
+Description=Agents44 Flask API
+After=network.target postgresql.service
+
+[Service]
+User=agents44
+WorkingDirectory=/opt/agents44/backend
+EnvironmentFile=/opt/agents44/.env
+Environment=RUNTIME_DIR=/opt/agents44/runtime
+Environment=WORKSPACE_PATH=/opt/agents44/workspace
+Environment=PATH=/opt/agents44/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LOG_DIR=/opt/agents44/logs
+ExecStart=/opt/agents44/venv/bin/gunicorn -c /opt/agents44/deploy/gunicorn.conf.py wsgi:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

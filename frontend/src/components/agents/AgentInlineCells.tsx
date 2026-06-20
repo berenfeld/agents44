@@ -2,7 +2,7 @@ import { CrontabHelperLink } from "@/components/agents/CrontabHelperLink";
 import { Input, Switch } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
 import { getCrontabError } from "@/lib/crontab";
-import { formatTimeoutSeconds, getTimeoutError, parseTimeoutInput } from "@/lib/timeout";
+import { getTimeoutError } from "@/lib/timeout";
 
 export function EnabledToggle({
   value,

@@ -1,5 +1,7 @@
 import logging
 import os
+import sys
+from pathlib import Path
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -10,9 +12,8 @@ from app.api.auth_routes import auth_bp, params_bp
 from app.api.departments import departments_bp
 from app.api.files import files_bp
 from app.api.runs import models_bp, runs_bp
-from app.auth import dev_login_allowed
 from app.config import Config
-from app.errors import APIClientError, api_endpoint
+from app.errors import api_endpoint
 from app.extensions import db
 from app.mcp_server.server import start_mcp_server
 from app.services.model_registry import init_model_registry
@@ -39,14 +40,24 @@ def get_app() -> Flask:
     return _flask_app
 
 
+def _configure_logging(log_dir: str) -> None:
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    if not any(isinstance(handler, logging.StreamHandler) for handler in root.handlers):
+        stream_handler = logging.StreamHandler(sys.stderr)
+        stream_handler.setFormatter(formatter)
+        root.addHandler(stream_handler)
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+    _configure_logging(app.config["LOG_DIR"])
 
     CORS(app, supports_credentials=True, origins=["http://localhost:3000", "https://agents.catch44.co.il"])
 
@@ -93,18 +104,6 @@ def create_app() -> Flask:
                 },
             }
         )
-
-    @app.post("/api/auth/dev-login")
-    @api_endpoint
-    def dev_login():
-        if not dev_login_allowed():
-            raise APIClientError("Not available", 404)
-        payload = request.get_json(force=True) or {}
-        email = payload.get("email", "dev@local")
-        from flask import session
-
-        session["user_email"] = email
-        return jsonify({"authenticated": True, "email": email})
 
     with app.app_context():
         db.create_all()

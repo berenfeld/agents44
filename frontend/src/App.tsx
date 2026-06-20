@@ -10,6 +10,7 @@ import DepartmentsPage from "@/pages/DepartmentsPage";
 import LoginPage from "@/pages/LoginPage";
 import SettingsPage from "@/pages/SettingsPage";
 import { Button } from "@/components/ui/primitives";
+import { AppFooter } from "@/components/ui/app-footer";
 
 function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -17,7 +18,7 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
     `px-3 py-2 rounded-md text-sm ${isActive ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="flex min-h-screen flex-col bg-slate-50">
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
           <div className="flex items-center gap-4">
@@ -51,7 +52,7 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-6">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
         <Routes>
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents_runs" element={<AgentsRunsPage />} />
@@ -64,6 +65,8 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
           <Route path="*" element={<Navigate to="/agents" replace />} />
         </Routes>
       </main>
+
+      <AppFooter />
 
       <ConfirmModal
         open={logoutOpen}
@@ -100,7 +103,14 @@ export default function App() {
     refreshAuth().catch(console.error);
   }, []);
 
-  if (loading) return <div className="p-8">Loading...</div>;
+  if (loading) {
+    return (
+      <div className="flex min-h-screen flex-col bg-slate-50">
+        <div className="flex-1 p-8">Loading...</div>
+        <AppFooter />
+      </div>
+    );
+  }
   if (!email) {
     return (
       <LoginPage

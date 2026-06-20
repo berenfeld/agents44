@@ -15,16 +15,24 @@ logger = logging.getLogger(__name__)
 
 OAUTH_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 
-_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-
-
-def is_localhost_host(host: str) -> bool:
-    hostname = host.split(":")[0].strip("[]").lower()
-    return hostname in _LOCALHOST_HOSTS
-
-
 def dev_login_allowed() -> bool:
-    return is_localhost_host(request.host)
+    return bool(Config.DEV_LOGIN_EMAIL)
+
+
+def dev_login_config():
+    return jsonify({"enabled": dev_login_allowed(), "email": Config.DEV_LOGIN_EMAIL})
+
+
+def dev_login():
+    if not dev_login_allowed():
+        raise APIClientError("Not available", 404)
+    payload = request.get_json(force=True) or {}
+    email = (payload.get("email") or "").strip()
+    password = payload.get("password") or ""
+    if email != Config.DEV_LOGIN_EMAIL or password != Config.DEV_LOGIN_PASSWORD:
+        raise APIClientError("Invalid credentials", 401)
+    session["user_email"] = email
+    return jsonify({"authenticated": True, "email": email})
 
 
 def _oauth_flow() -> Flow:

@@ -57,22 +57,28 @@ Tail Flask and frontend logs:
 ### Dev auth
 
 - **Google OAuth**: set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and add emails to `ALLOWED_EMAILS` in `system_params`
-- **Dev login**: available only on `localhost` / `127.0.0.1` (local Vite dev server)
+- **Dev login**: set `DEV_LOGIN_EMAIL` (non-empty enables dev login; e.g. `admin@catch44.co.il`) and `DEV_LOGIN_PASSWORD` in the project `.env`. Leave `DEV_LOGIN_EMAIL` empty in production unless you need password-based dev access.
 
 ## Project layout
 
 - `backend/` — Flask API, agent runner, MCP server
 - `frontend/` — React operator UI (Agents, Agents Runs, Agent Files)
-- `.workspace/` — local dev files tree (gitignored; production uses `/var/lib/agents44/workspace`)
-- `scripts/install-server.sh` — idempotent VM install
+- `.workspace/` — local dev files tree (gitignored; production uses `/opt/agents44/workspace`)
+- `scripts/` — local/CI helpers (`git-version.sh`)
+- `deploy/scripts/install-server.sh` — idempotent VM infrastructure install
+- `deploy/scripts/stop-*.sh` / `start-*.sh` — stop/start backend and nginx on the VM
+- `deploy/systemd/agents44.service` — systemd unit (copied to `/etc/systemd/system/`)
+- `deploy/nginx/agents.catch44.co.il.conf` — nginx site config
 
 ## VM setup (agents.catch44.co.il)
 
+See **[README.deployment.md](README.deployment.md)** for full production deployment docs.
+
 1. Ubuntu 24 VM with DNS `agents.catch44.co.il` pointing to the host
-2. Clone/rsync repo to `/opt/agents44`
-3. Copy `.env.example` → `/opt/agents44/.env` and fill secrets (`ANTHROPIC_API_KEY`, OAuth, SMTP, etc.)
-4. Run `sudo bash scripts/install-server.sh`
-5. TLS: `sudo certbot --nginx -d agents.catch44.co.il`
+2. SCP `deploy/` and `.env.example`, then run `sudo bash deploy/scripts/install-server.sh`
+3. Fill `/opt/agents44/.env` with production secrets
+4. Configure GitHub Actions secrets and push to `main` to deploy software
+5. TLS is configured automatically by `deploy/scripts/install-server.sh` (certbot + HTTPS redirect)
 
 ## GitHub Actions secrets
 
@@ -100,7 +106,7 @@ All mutating API calls use `Content-Type: application/json`.
 
 ## Workspace layout
 
-Local dev uses `./.workspace` in the repository root (created by `./start-dev.sh`, gitignored). Production uses `/var/lib/agents44/workspace`.
+Local dev uses `./.workspace` in the repository root (created by `./start-dev.sh`, gitignored). Production uses `/opt/agents44/workspace`.
 
 ```
 .workspace/                 # local dev only (./.workspace)
