@@ -21,13 +21,41 @@ SEED_PARAMS = [
         "key": "MODEL_PRICING",
         "value": json.dumps(
             {
-                "claude-sonnet-4-20250514": {
+                "claude-fable-5": {
+                    "input_per_million": 10.0,
+                    "output_per_million": 50.0,
+                },
+                "claude-opus-4-8": {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                },
+                "claude-opus-4-7": {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                },
+                "claude-opus-4-6": {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                },
+                "claude-opus-4-5-20251101": {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                },
+                "claude-opus-4-1-20250805": {
+                    "input_per_million": 15.0,
+                    "output_per_million": 75.0,
+                },
+                "claude-sonnet-4-6": {
                     "input_per_million": 3.0,
                     "output_per_million": 15.0,
                 },
-                "claude-3-5-sonnet-20241022": {
+                "claude-sonnet-4-5-20250929": {
                     "input_per_million": 3.0,
                     "output_per_million": 15.0,
+                },
+                "claude-haiku-4-5-20251001": {
+                    "input_per_million": 1.0,
+                    "output_per_million": 5.0,
                 },
             }
         ),
