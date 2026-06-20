@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { cn } from "@/lib/utils";
 import { Button } from "./primitives";
 
 export function Modal({
@@ -6,17 +7,24 @@ export function Modal({
   onOpenChange,
   title,
   children,
+  size = "default",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   children: React.ReactNode;
+  size?: "default" | "large";
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl">
+        <Dialog.Content
+          className={cn(
+            "fixed left-1/2 top-1/2 max-h-[92vh] w-full -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg bg-white p-6 shadow-xl",
+            size === "large" ? "max-w-5xl" : "max-w-lg",
+          )}
+        >
           <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
           <div className="mt-4">{children}</div>
         </Dialog.Content>

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AgentRun, api } from "@/api/client";
 import { SortableTh } from "@/components/ui/sortable-table";
+import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { formatCost, formatDate } from "@/lib/utils";
-import { Button } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/modal";
 import { useTableSort } from "@/hooks/useTableSort";
 
@@ -57,6 +57,20 @@ export default function AgentsRunsPage() {
     }
   };
 
+  const openPrompt = (run: AgentRun) => {
+    openModal(`Run #${run.id} prompt`, async () => {
+      const res = await api.get<{ prompt: string }>(`/runs/${run.id}/prompt`);
+      return res.data.prompt || "(empty)";
+    });
+  };
+
+  const openLog = (run: AgentRun) => {
+    openModal(`Run #${run.id} log`, async () => {
+      const res = await api.get<{ log: string }>(`/runs/${run.id}/log`);
+      return res.data.log || "(empty)";
+    });
+  };
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Agents Runs</h1>
@@ -74,13 +88,6 @@ export default function AgentsRunsPage() {
               />
               <SortableTh label="Status" sortKey="status" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
               <SortableTh label="Model" sortKey="model" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
-              <SortableTh
-                label="Prompt"
-                sortKey="prompt_preview"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={toggleSort}
-              />
               <SortableTh
                 label="Tokens in"
                 sortKey="tokens_in"
@@ -117,6 +124,7 @@ export default function AgentsRunsPage() {
                 onSort={toggleSort}
               />
               <th className="px-4 py-2">Run folder</th>
+              <th className="px-4 py-2">Prompt</th>
               <th className="px-4 py-2">Log</th>
             </tr>
           </thead>
@@ -127,25 +135,6 @@ export default function AgentsRunsPage() {
                 <td className="px-4 py-2">{run.agent_name || run.agent_id}</td>
                 <td className="px-4 py-2">{run.status}</td>
                 <td className="px-4 py-2">{run.model || "-"}</td>
-                <td className="max-w-xs px-4 py-2">
-                  {run.prompt_preview ? (
-                    <button
-                      type="button"
-                      className="block w-full truncate text-left text-slate-700 hover:text-slate-900 hover:underline"
-                      title={run.prompt_preview}
-                      onClick={() =>
-                        openModal(`Run #${run.id} prompt`, async () => {
-                          const res = await api.get<{ prompt: string }>(`/runs/${run.id}/prompt`);
-                          return res.data.prompt || "(empty)";
-                        })
-                      }
-                    >
-                      {run.prompt_preview}
-                    </button>
-                  ) : (
-                    <span className="text-slate-400">-</span>
-                  )}
-                </td>
                 <td className="px-4 py-2">{run.tokens_in ?? "-"}</td>
                 <td className="px-4 py-2">{run.tokens_out ?? "-"}</td>
                 <td className="px-4 py-2">{formatCost(run.estimated_cost_usd)}</td>
@@ -161,17 +150,10 @@ export default function AgentsRunsPage() {
                   )}
                 </td>
                 <td className="px-4 py-2">
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      openModal(`Run #${run.id} log`, async () => {
-                        const res = await api.get<{ log: string }>(`/runs/${run.id}/log`);
-                        return res.data.log || "(empty)";
-                      })
-                    }
-                  >
-                    View
-                  </Button>
+                  <ViewRowMenu onView={() => openPrompt(run)} disabled={!run.prompt_path && !run.prompt_preview} />
+                </td>
+                <td className="px-4 py-2">
+                  <ViewRowMenu onView={() => openLog(run)} disabled={!run.log_path} />
                 </td>
               </tr>
             ))}
@@ -179,8 +161,8 @@ export default function AgentsRunsPage() {
         </table>
       </div>
 
-      <Modal open={modalOpen} onOpenChange={setModalOpen} title={modalTitle}>
-        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-4 text-xs text-slate-100">
+      <Modal open={modalOpen} onOpenChange={setModalOpen} title={modalTitle} size="large">
+        <pre className="max-h-[75vh] overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-4 text-xs text-slate-100">
           {modalContent || "(empty)"}
         </pre>
       </Modal>
