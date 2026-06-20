@@ -24,6 +24,26 @@ export type Agent = {
   timeout_seconds: number;
 };
 
+export type AgentWritePayload = {
+  name: string;
+  department: string;
+  model: string;
+  crond: string | null;
+  enabled: boolean;
+  timeout_seconds: number;
+};
+
+export function buildAgentWritePayload(values: AgentWritePayload): AgentWritePayload {
+  return {
+    name: values.name,
+    department: values.department,
+    model: values.model,
+    crond: values.crond,
+    enabled: values.enabled,
+    timeout_seconds: values.timeout_seconds,
+  };
+}
+
 export type AgentRun = {
   id: number;
   agent_id: number;

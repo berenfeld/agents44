@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from marshmallow import Schema, fields, validate
+from marshmallow import EXCLUDE, Schema, ValidationError, fields, pre_load, validate
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -7,18 +7,39 @@ from app.extensions import db
 from app.models import SystemAgent, SystemDepartment
 from app.services.model_registry import validate_model
 from app.services.scheduler import sync_scheduler_jobs
+from app.services.timeout import parse_timeout_input
 from app.services.workspace import ensure_agent_folder
 
 agents_bp = Blueprint("agents", __name__)
 
 
 class AgentSchema(Schema):
+    class Meta:
+        unknown = EXCLUDE
+
     name = fields.Str(required=True, validate=validate.Length(min=1, max=128))
     department = fields.Str(required=True, validate=validate.Length(min=1, max=128))
     model = fields.Str(required=True)
     crond = fields.Str(allow_none=True)
     enabled = fields.Bool(load_default=True)
     timeout_seconds = fields.Int(load_default=300, validate=validate.Range(min=1, max=86400))
+    timeout = fields.Raw(load_only=True, required=False)
+
+    @pre_load
+    def normalize_timeout(self, data, **kwargs):
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        timeout_label = payload.pop("timeout", None)
+        if timeout_label is not None and str(timeout_label).strip() and "timeout_seconds" not in payload:
+            if isinstance(timeout_label, int):
+                payload["timeout_seconds"] = timeout_label
+            else:
+                parsed = parse_timeout_input(str(timeout_label))
+                if parsed is None:
+                    raise ValidationError({"timeout": ["Use mm:ss (e.g. 5:00) or seconds"]})
+                payload["timeout_seconds"] = parsed
+        return payload
 
 
 def _require_department(name: str) -> str:

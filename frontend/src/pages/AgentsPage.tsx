@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Agent, api, ModelsResponse } from "@/api/client";
+import { Agent, api, buildAgentWritePayload, ModelsResponse } from "@/api/client";
 import { AgentDetailSummary } from "@/components/agents/AgentDetailSummary";
 import { AgentFormDialog } from "@/components/agents/AgentFormDialog";
 import {
@@ -62,7 +62,7 @@ export default function AgentsPage() {
     agent: Agent,
     patch: Partial<Pick<Agent, "model" | "enabled" | "crond" | "timeout_seconds">>,
   ) => {
-    await api.put(`/agents/${agent.id}`, patch);
+    await api.put(`/agents/${agent.id}`, buildAgentWritePayload({ ...agent, ...patch }));
     await load();
   };
 

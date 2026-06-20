@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Agent, api, Department, ModelsResponse } from "@/api/client";
+import { Agent, api, AgentWritePayload, buildAgentWritePayload, Department, ModelsResponse } from "@/api/client";
 import { CrontabHelperLink } from "@/components/agents/CrontabHelperLink";
 import { Modal } from "@/components/ui/modal";
 import { Button, Input, Label, Switch } from "@/components/ui/primitives";
@@ -30,10 +30,6 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
-type AgentSubmitValues = Omit<FormValues, "timeout" | "crond"> & {
-  crond: string | null;
-  timeout_seconds: number;
-};
 
 export function AgentFormDialog({
   open,
@@ -44,7 +40,7 @@ export function AgentFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agent?: Agent;
-  onSubmit: (values: AgentSubmitValues) => Promise<void>;
+  onSubmit: (values: AgentWritePayload) => Promise<void>;
 }) {
   const [models, setModels] = useState<ModelsResponse>({ models: [], default: "" });
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -100,10 +96,18 @@ export function AgentFormDialog({
       <form
         className="space-y-4"
         onSubmit={handleSubmit(async (values) => {
-          const { timeout, ...rest } = values;
-          const timeoutSeconds = parseTimeoutInput(timeout);
+          const timeoutSeconds = parseTimeoutInput(values.timeout);
           if (timeoutSeconds === null) return;
-          await onSubmit({ ...rest, crond: values.crond || null, timeout_seconds: timeoutSeconds });
+          await onSubmit(
+            buildAgentWritePayload({
+              name: values.name,
+              department: values.department,
+              model: values.model,
+              crond: values.crond || null,
+              enabled: values.enabled,
+              timeout_seconds: timeoutSeconds,
+            }),
+          );
           onOpenChange(false);
         })}
       >
