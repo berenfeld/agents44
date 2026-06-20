@@ -4,8 +4,6 @@ from app.models.system_department import SystemDepartment
 from app.models.system_param import SystemParam
 from app.models.run_status import RunStatus
 from app.models.trigger_source import TriggerSource
-from app.models.stock import Stock
-from app.models.stock_price import StockPrice
 
 __all__ = [
     "RunStatus",
@@ -14,6 +12,4 @@ __all__ = [
     "SystemDepartment",
     "SystemParam",
     "TriggerSource",
-    "Stock",
-    "StockPrice",
 ]

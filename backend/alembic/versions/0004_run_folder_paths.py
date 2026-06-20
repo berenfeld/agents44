@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 revision = "0004"
-down_revision = "0003"
+down_revision = "0002"
 branch_labels = None
 depends_on = None
 
