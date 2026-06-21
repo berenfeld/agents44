@@ -19,14 +19,18 @@ echo "Installing Python dependencies"
 "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/backend/requirements.txt"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR/venv"
 
-echo "Running database migrations"
-cd "$APP_DIR/backend"
-"$APP_DIR/venv/bin/alembic" upgrade head
-
 if [ ! -s "$APP_DIR/.env" ]; then
   echo "ERROR: $APP_DIR/.env is missing or empty — configure secrets before deploy"
   exit 1
 fi
+
+echo "Syncing PostgreSQL app user privileges"
+bash "$APP_DIR/deploy/scripts/sync-psql-password.sh" "$APP_DIR/.env"
+
+echo "Running database migrations"
+cd "$APP_DIR/backend"
+"$APP_DIR/venv/bin/alembic" upgrade head
+
 if ! grep -q '^ANTHROPIC_API_KEY=.\+' "$APP_DIR/.env"; then
   echo "ERROR: ANTHROPIC_API_KEY is not set in $APP_DIR/.env — backend will not start"
   exit 1
