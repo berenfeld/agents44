@@ -48,8 +48,8 @@ export function RunLogViewer({
   const matches = useMemo(() => countMatches(content, search), [content, search]);
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Input
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
@@ -71,7 +71,7 @@ export function RunLogViewer({
           </span>
         ) : null}
       </div>
-      <div className="max-h-[75vh] overflow-y-auto rounded border bg-white">
+      <div className="min-h-0 flex-1 overflow-y-auto rounded border bg-white">
         <pre
           className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-slate-900"
           dangerouslySetInnerHTML={{ __html: highlighted || "(empty)" }}

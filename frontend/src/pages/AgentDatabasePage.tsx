@@ -2,19 +2,72 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataGrid, { SelectColumn, type Column, type RowsChangeData } from "react-data-grid";
 import {
   AgentDbColumn,
+  AgentDbFilterOp,
   AgentDbRow,
+  AgentDbRowsQuery,
   AgentDbSchema,
   AgentDbTable,
   api,
 } from "@/api/client";
 import { ConfirmModal } from "@/components/ui/modal";
-import { Button } from "@/components/ui/primitives";
+import { Button, Input, Label } from "@/components/ui/primitives";
 import "react-data-grid/lib/styles.css";
 
 type GridRow = AgentDbRow & {
   _rowId: string;
   _isNew?: boolean;
 };
+
+type SortDirection = "asc" | "desc";
+
+type RowQueryState = {
+  limit: number;
+  offset: number;
+  sortBy: string | null;
+  sortDir: SortDirection;
+  filterColumn: string;
+  filterOp: AgentDbFilterOp | "";
+  filterValue: string;
+};
+
+const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
+
+const FILTER_OP_LABELS: Record<AgentDbFilterOp, string> = {
+  eq: "==",
+  ne: "!=",
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
+  ilike: "ILIKE",
+  like: "LIKE",
+  is_null: "IS NULL",
+  is_not_null: "IS NOT NULL",
+};
+
+const NULL_FILTER_OPS = new Set<AgentDbFilterOp>(["is_null", "is_not_null"]);
+
+function defaultQueryState(): RowQueryState {
+  return {
+    limit: 100,
+    offset: 0,
+    sortBy: null,
+    sortDir: "asc",
+    filterColumn: "",
+    filterOp: "",
+    filterValue: "",
+  };
+}
+
+function filterOpsForType(columnType: string): AgentDbFilterOp[] {
+  if (columnType === "boolean") {
+    return ["eq", "ne", "is_null", "is_not_null"];
+  }
+  if (columnType === "integer" || columnType === "number" || columnType === "date" || columnType === "datetime") {
+    return ["eq", "ne", "gt", "gte", "lt", "lte", "is_null", "is_not_null"];
+  }
+  return ["eq", "ne", "ilike", "like", "is_null", "is_not_null"];
+}
 
 function rowKey(row: GridRow) {
   return row._rowId;
@@ -61,15 +114,54 @@ function formatCell(value: unknown) {
   return String(value);
 }
 
-function buildColumns(schema: AgentDbSchema): Column<GridRow>[] {
+function buildRowQueryParams(query: RowQueryState): AgentDbRowsQuery {
+  const params: AgentDbRowsQuery = {
+    limit: query.limit,
+    offset: query.offset,
+  };
+  if (query.sortBy) {
+    params.sort_by = query.sortBy;
+    params.sort_dir = query.sortDir;
+  }
+  if (query.filterColumn && query.filterOp) {
+    params.filter_column = query.filterColumn;
+    params.filter_op = query.filterOp;
+    if (!NULL_FILTER_OPS.has(query.filterOp)) {
+      params.filter_value = query.filterValue;
+    }
+  }
+  return params;
+}
+
+function buildColumns(
+  schema: AgentDbSchema,
+  sortBy: string | null,
+  sortDir: SortDirection,
+  onSort: (column: string) => void,
+): Column<GridRow>[] {
   const dataColumns = schema.columns.map((col: AgentDbColumn) => {
     const editable = !(col.primary_key && col.autoincrement);
+    const active = sortBy === col.name;
     return {
       key: col.name,
       name: col.primary_key ? `${col.name} (PK)` : col.name,
       editable,
       resizable: true,
       minWidth: 120,
+      renderHeaderCell: () => (
+        <button
+          type="button"
+          onClick={() => onSort(col.name)}
+          className={`inline-flex w-full items-center gap-1 px-2 py-1 text-left font-medium hover:text-slate-900 ${
+            active ? "text-slate-900" : "text-slate-700"
+          }`}
+        >
+          <span className="truncate">{col.primary_key ? `${col.name} (PK)` : col.name}</span>
+          <span className="shrink-0 text-xs text-slate-400" aria-hidden>
+            {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+          </span>
+        </button>
+      ),
       renderCell: ({ row }: { row: GridRow }) => <span className="truncate">{formatCell(row[col.name])}</span>,
     } satisfies Column<GridRow>;
   });
@@ -78,6 +170,10 @@ function buildColumns(schema: AgentDbSchema): Column<GridRow>[] {
 
 function tableApiPath(qualifiedName: string) {
   return `/agent-db/tables/${encodeURIComponent(qualifiedName)}`;
+}
+
+function selectClassName(className?: string) {
+  return `rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 ${className ?? ""}`;
 }
 
 export default function AgentDatabasePage() {
@@ -91,6 +187,12 @@ export default function AgentDatabasePage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [query, setQuery] = useState<RowQueryState>(() => defaultQueryState());
+  const [draftFilter, setDraftFilter] = useState({
+    filterColumn: "",
+    filterOp: "" as AgentDbFilterOp | "",
+    filterValue: "",
+  });
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const loadTables = useCallback(async () => {
@@ -111,20 +213,24 @@ export default function AgentDatabasePage() {
     return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [tables]);
 
-  const loadTableData = useCallback(async (tableName: string) => {
+  const loadTableData = useCallback(async (tableName: string, rowQuery: RowQueryState) => {
     setLoading(true);
     setError(null);
     try {
+      const params = buildRowQueryParams(rowQuery);
       const [schemaRes, rowsRes] = await Promise.all([
         api.get<AgentDbSchema>(`${tableApiPath(tableName)}/schema`),
-        api.get<{ items: AgentDbRow[]; total: number }>(`${tableApiPath(tableName)}/rows`),
+        api.get<{ items: AgentDbRow[]; total: number; limit: number; offset: number }>(
+          `${tableApiPath(tableName)}/rows`,
+          { params },
+        ),
       ]);
       setSchema(schemaRes.data);
       setRows(toGridRows(rowsRes.data.items, schemaRes.data));
       setTotal(rowsRes.data.total);
       setSelectedRows(new Set());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load table");
+      setError(axiosErrorMessage(err) ?? "Failed to load table");
       setSchema(null);
       setRows([]);
       setTotal(0);
@@ -139,9 +245,9 @@ export default function AgentDatabasePage() {
 
   useEffect(() => {
     if (selectedTable) {
-      loadTableData(selectedTable).catch(console.error);
+      loadTableData(selectedTable, query).catch(console.error);
     }
-  }, [selectedTable, loadTableData]);
+  }, [selectedTable, query, loadTableData]);
 
   useEffect(() => {
     const timers = saveTimers.current;
@@ -152,7 +258,62 @@ export default function AgentDatabasePage() {
     };
   }, []);
 
-  const columns = useMemo(() => (schema ? buildColumns(schema) : []), [schema]);
+  const handleSort = useCallback((column: string) => {
+    setQuery((current) => {
+      if (current.sortBy === column) {
+        return { ...current, sortDir: current.sortDir === "asc" ? "desc" : "asc", offset: 0 };
+      }
+      return { ...current, sortBy: column, sortDir: "asc", offset: 0 };
+    });
+  }, []);
+
+  const columns = useMemo(
+    () => (schema ? buildColumns(schema, query.sortBy, query.sortDir, handleSort) : []),
+    [schema, query.sortBy, query.sortDir, handleSort],
+  );
+
+  const selectedFilterColumn = useMemo(
+    () => schema?.columns.find((col) => col.name === draftFilter.filterColumn) ?? null,
+    [schema, draftFilter.filterColumn],
+  );
+
+  const availableFilterOps = useMemo(
+    () => (selectedFilterColumn ? filterOpsForType(selectedFilterColumn.type) : []),
+    [selectedFilterColumn],
+  );
+
+  const applyFilter = () => {
+    if (!draftFilter.filterColumn || !draftFilter.filterOp) {
+      clearFilter();
+      return;
+    }
+    if (
+      !NULL_FILTER_OPS.has(draftFilter.filterOp) &&
+      draftFilter.filterValue.trim() === ""
+    ) {
+      setError("Filter value is required");
+      return;
+    }
+    setError(null);
+    setQuery((current) => ({
+      ...current,
+      offset: 0,
+      filterColumn: draftFilter.filterColumn,
+      filterOp: draftFilter.filterOp,
+      filterValue: draftFilter.filterValue,
+    }));
+  };
+
+  const clearFilter = () => {
+    setDraftFilter({ filterColumn: "", filterOp: "", filterValue: "" });
+    setQuery((current) => ({
+      ...current,
+      offset: 0,
+      filterColumn: "",
+      filterOp: "",
+      filterValue: "",
+    }));
+  };
 
   const scheduleSave = useCallback(
     (row: GridRow) => {
@@ -244,8 +405,11 @@ export default function AgentDatabasePage() {
     }
   };
 
-
   const deleteCount = rows.filter((row) => selectedRows.has(row._rowId) && !row._isNew).length;
+  const rangeStart = total === 0 ? 0 : query.offset + 1;
+  const rangeEnd = total === 0 ? 0 : Math.min(query.offset + rows.length, total);
+  const canGoPrev = query.offset > 0;
+  const canGoNext = query.offset + query.limit < total;
 
   return (
     <div className="space-y-4">
@@ -274,7 +438,11 @@ export default function AgentDatabasePage() {
                     <li key={table.qualified_name}>
                       <button
                         type="button"
-                        onClick={() => setSelectedTable(table.qualified_name)}
+                        onClick={() => {
+                          setSelectedTable(table.qualified_name);
+                          setQuery(defaultQueryState());
+                          setDraftFilter({ filterColumn: "", filterOp: "", filterValue: "" });
+                        }}
                         className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
                           selectedTable === table.qualified_name
                             ? "bg-slate-900 text-white"
@@ -306,7 +474,7 @@ export default function AgentDatabasePage() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => selectedTable && loadTableData(selectedTable)}
+              onClick={() => selectedTable && loadTableData(selectedTable, query)}
               disabled={!selectedTable || loading || busy}
             >
               Refresh
@@ -319,10 +487,137 @@ export default function AgentDatabasePage() {
               Delete selected ({deleteCount})
             </Button>
             {busy ? <span className="text-sm text-slate-500">Saving…</span> : null}
+          </div>
+
+          {schema ? (
+            <div className="rounded-lg border bg-white p-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <Label htmlFor="filter-column">Filter column</Label>
+                  <select
+                    id="filter-column"
+                    value={draftFilter.filterColumn}
+                    onChange={(event) => {
+                      const filterColumn = event.target.value;
+                      const column = schema.columns.find((item) => item.name === filterColumn);
+                      const ops = column ? filterOpsForType(column.type) : [];
+                      setDraftFilter((current) => ({
+                        ...current,
+                        filterColumn,
+                        filterOp: ops.includes(current.filterOp as AgentDbFilterOp) ? current.filterOp : ops[0] ?? "",
+                      }));
+                    }}
+                    className={selectClassName("mt-1 min-w-[10rem]")}
+                  >
+                    <option value="">(none)</option>
+                    {schema.columns.map((col) => (
+                      <option key={col.name} value={col.name}>
+                        {col.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="filter-op">Operator</Label>
+                  <select
+                    id="filter-op"
+                    value={draftFilter.filterOp}
+                    onChange={(event) =>
+                      setDraftFilter((current) => ({
+                        ...current,
+                        filterOp: event.target.value as AgentDbFilterOp | "",
+                      }))
+                    }
+                    disabled={!draftFilter.filterColumn}
+                    className={selectClassName("mt-1 min-w-[8rem]")}
+                  >
+                    <option value="">(select)</option>
+                    {availableFilterOps.map((op) => (
+                      <option key={op} value={op}>
+                        {FILTER_OP_LABELS[op]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="min-w-[12rem] flex-1">
+                  <Label htmlFor="filter-value">Value</Label>
+                  <Input
+                    id="filter-value"
+                    value={draftFilter.filterValue}
+                    onChange={(event) =>
+                      setDraftFilter((current) => ({ ...current, filterValue: event.target.value }))
+                    }
+                    disabled={
+                      !draftFilter.filterColumn ||
+                      !draftFilter.filterOp ||
+                      NULL_FILTER_OPS.has(draftFilter.filterOp as AgentDbFilterOp)
+                    }
+                    placeholder={
+                      draftFilter.filterOp === "ilike" || draftFilter.filterOp === "like"
+                        ? "contains…"
+                        : "value…"
+                    }
+                    className="mt-1"
+                  />
+                </div>
+                <Button onClick={applyFilter} disabled={!schema || loading}>
+                  Apply filter
+                </Button>
+                {query.filterColumn && query.filterOp ? (
+                  <Button variant="outline" onClick={clearFilter}>
+                    Clear filter
+                  </Button>
+                ) : null}
+              </div>
+              {query.filterColumn && query.filterOp ? (
+                <p className="mt-2 text-xs text-slate-500">
+                  Active filter: {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
+                  {!NULL_FILTER_OPS.has(query.filterOp as AgentDbFilterOp) ? ` "${query.filterValue}"` : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="row-limit">Rows</Label>
+              <select
+                id="row-limit"
+                value={query.limit}
+                onChange={(event) =>
+                  setQuery((current) => ({
+                    ...current,
+                    limit: Number(event.target.value),
+                    offset: 0,
+                  }))
+                }
+                disabled={!selectedTable || loading}
+                className={selectClassName()}
+              >
+                {ROW_LIMIT_OPTIONS.map((limit) => (
+                  <option key={limit} value={limit}>
+                    {limit}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - current.limit) }))}
+              disabled={!canGoPrev || loading}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setQuery((current) => ({ ...current, offset: current.offset + current.limit }))}
+              disabled={!canGoNext || loading}
+            >
+              Next
+            </Button>
             {selectedTable ? (
-              <span className="ml-auto text-sm text-slate-500">
-                {selectedTable} · {total} row{total === 1 ? "" : "s"}
-                {rows.length < total ? ` (showing ${rows.length})` : ""}
+              <span className="text-sm text-slate-500">
+                {selectedTable} · showing {rangeStart}–{rangeEnd} of {total}
               </span>
             ) : null}
           </div>
@@ -348,7 +643,7 @@ export default function AgentDatabasePage() {
           {schema ? (
             <p className="text-xs text-slate-500">
               Primary keys: {schema.primary_keys.join(", ") || "(none)"}. Double-click a cell to edit; new rows insert
-              after you fill required fields.
+              after you fill required fields. Click a column header to sort.
             </p>
           ) : null}
         </section>

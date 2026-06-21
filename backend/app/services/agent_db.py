@@ -22,8 +22,15 @@ SYSTEM_TABLES = frozenset(
 )
 
 IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-DEFAULT_ROW_LIMIT = 500
+DEFAULT_ROW_LIMIT = 100
 MAX_ROW_LIMIT = 2000
+ALLOWED_FILTER_OPS = frozenset(
+    {"eq", "ne", "gt", "gte", "lt", "lte", "ilike", "like", "is_null", "is_not_null"}
+)
+NULL_FILTER_OPS = frozenset({"is_null", "is_not_null"})
+STRING_FILTER_OPS = frozenset({"eq", "ne", "ilike", "like", "is_null", "is_not_null"})
+COMPARABLE_FILTER_OPS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte", "is_null", "is_not_null"})
+BOOLEAN_FILTER_OPS = frozenset({"eq", "ne", "is_null", "is_not_null"})
 
 
 def _validate_identifier(name: str, *, label: str) -> str:
@@ -216,23 +223,124 @@ def _filter_values(table_name: str, values: dict, *, for_insert: bool) -> dict:
     return filtered
 
 
-def list_rows(table_name: str, *, limit: int = DEFAULT_ROW_LIMIT, offset: int = 0) -> dict:
+def _filter_ops_for_type(column_type: str) -> frozenset[str]:
+    if column_type == "boolean":
+        return BOOLEAN_FILTER_OPS
+    if column_type in {"integer", "number", "date", "datetime"}:
+        return COMPARABLE_FILTER_OPS
+    return STRING_FILTER_OPS
+
+
+def _build_row_filter(
+    reflected: Table,
+    schema_info: dict,
+    *,
+    filter_column: str | None,
+    filter_op: str | None,
+    filter_value: str | None,
+) -> list[Any]:
+    if not filter_column and not filter_op and filter_value in (None, ""):
+        return []
+    if not filter_column or not filter_op:
+        raise APIClientError("Filter requires column and operator", 400)
+
+    op = filter_op.strip().lower()
+    if op not in ALLOWED_FILTER_OPS:
+        raise APIClientError(f"Invalid filter operator: {filter_op}", 400)
+
+    col_name = filter_column.strip()
+    if col_name not in {col["name"] for col in schema_info["columns"]}:
+        raise APIClientError(f"Unknown column: {filter_column}", 400)
+
+    col_meta = next(col for col in schema_info["columns"] if col["name"] == col_name)
+    if op not in _filter_ops_for_type(col_meta["type"]):
+        raise APIClientError(f"Operator {filter_op} is not supported for column {col_name}", 400)
+
+    col = reflected.c[col_name]
+    if op in NULL_FILTER_OPS:
+        return [col.is_(None) if op == "is_null" else col.is_not(None)]
+
+    if filter_value is None or filter_value == "":
+        raise APIClientError("Filter value is required", 400)
+
+    if op in {"ilike", "like"}:
+        pattern = str(filter_value)
+        if "%" not in pattern and "_" not in pattern:
+            pattern = f"%{pattern}%"
+        return [col.ilike(pattern) if op == "ilike" else col.like(pattern)]
+
+    coerced = _coerce_input(filter_value, col_meta["type"])
+    if op == "eq":
+        return [col == coerced]
+    if op == "ne":
+        return [col != coerced]
+    if op == "gt":
+        return [col > coerced]
+    if op == "gte":
+        return [col >= coerced]
+    if op == "lt":
+        return [col < coerced]
+    if op == "lte":
+        return [col <= coerced]
+    raise APIClientError(f"Invalid filter operator: {filter_op}", 400)
+
+
+def list_rows(
+    table_name: str,
+    *,
+    limit: int = DEFAULT_ROW_LIMIT,
+    offset: int = 0,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+    filter_column: str | None = None,
+    filter_op: str | None = None,
+    filter_value: str | None = None,
+) -> dict:
     schema, table = _parse_qualified_table(table_name)
     limit = max(1, min(limit, MAX_ROW_LIMIT))
     offset = max(0, offset)
+    schema_info = get_table_schema(table_name)
     reflected = _reflect_table(schema, table)
-    total = db.session.execute(select(func.count()).select_from(reflected)).scalar_one()
-    stmt = select(reflected).limit(limit).offset(offset)
-    pk_cols = get_table_schema(table_name)["primary_keys"]
-    if pk_cols:
-        stmt = stmt.order_by(*[reflected.c[col] for col in pk_cols])
+    where = _build_row_filter(
+        reflected,
+        schema_info,
+        filter_column=filter_column,
+        filter_op=filter_op,
+        filter_value=filter_value,
+    )
+
+    total = db.session.execute(select(func.count()).select_from(reflected).where(*where)).scalar_one()
+
+    stmt = select(reflected)
+    if where:
+        stmt = stmt.where(*where)
+    if sort_by:
+        sort_column = sort_by.strip()
+        if sort_column not in {col["name"] for col in schema_info["columns"]}:
+            raise APIClientError(f"Unknown sort column: {sort_by}", 400)
+        direction = (sort_dir or "asc").strip().lower()
+        if direction not in {"asc", "desc"}:
+            raise APIClientError("sort_dir must be asc or desc", 400)
+        sort_col = reflected.c[sort_column]
+        stmt = stmt.order_by(sort_col.desc() if direction == "desc" else sort_col.asc())
+    stmt = stmt.limit(limit).offset(offset)
     rows = db.session.execute(stmt).mappings().all()
-    return {
+
+    response: dict[str, Any] = {
         "items": [_serialize_row(row) for row in rows],
         "total": int(total),
         "limit": limit,
         "offset": offset,
     }
+    if sort_by:
+        response["sort"] = {"column": sort_by.strip(), "direction": (sort_dir or "asc").strip().lower()}
+    if filter_column and filter_op:
+        response["filter"] = {
+            "column": filter_column.strip(),
+            "op": filter_op.strip().lower(),
+            "value": filter_value,
+        }
+    return response
 
 
 def insert_row(table_name: str, values: dict) -> dict:

@@ -33,3 +33,13 @@ export function formatDuration(startedAt: string | null, finishedAt: string | nu
   const seconds = totalSeconds % 60;
   return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
 }
+
+export function formatTokens(tokensIn: number | null, tokensOut: number | null): string {
+  if (tokensIn == null && tokensOut == null) return "-";
+  return `${tokensIn ?? "-"} / ${tokensOut ?? "-"}`;
+}
+
+export function runTokensTotal(tokensIn: number | null, tokensOut: number | null): number {
+  if (tokensIn == null && tokensOut == null) return -1;
+  return (tokensIn ?? 0) + (tokensOut ?? 0);
+}

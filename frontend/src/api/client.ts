@@ -103,3 +103,34 @@ export type AgentDbSchema = {
 };
 
 export type AgentDbRow = Record<string, unknown>;
+
+export type AgentDbFilterOp =
+  | "eq"
+  | "ne"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "ilike"
+  | "like"
+  | "is_null"
+  | "is_not_null";
+
+export type AgentDbRowsQuery = {
+  limit?: number;
+  offset?: number;
+  sort_by?: string | null;
+  sort_dir?: "asc" | "desc" | null;
+  filter_column?: string | null;
+  filter_op?: AgentDbFilterOp | null;
+  filter_value?: string | null;
+};
+
+export type AgentDbRowsResponse = {
+  items: AgentDbRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  sort?: { column: string; direction: "asc" | "desc" };
+  filter?: { column: string; op: AgentDbFilterOp; value: string | null };
+};

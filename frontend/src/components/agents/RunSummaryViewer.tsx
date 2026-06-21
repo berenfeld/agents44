@@ -7,9 +7,9 @@ export function RunSummaryViewer({ content, live }: { content: string; live?: bo
   const trimmed = content.trim();
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {live ? (
-        <div className="flex justify-end">
+        <div className="flex shrink-0 justify-end">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-800">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
@@ -19,7 +19,7 @@ export function RunSummaryViewer({ content, live }: { content: string; live?: bo
           </span>
         </div>
       ) : null}
-      <div className="max-h-[75vh] overflow-y-auto rounded border bg-white p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto rounded border bg-white p-4">
         {trimmed ? (
           <div className={markdownClassName}>
             <ReactMarkdown>{content}</ReactMarkdown>

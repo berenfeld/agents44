@@ -6,7 +6,7 @@ import { RunStatusBadge } from "@/components/agents/RunStatusBadge";
 import { RunSummaryViewer } from "@/components/agents/RunSummaryViewer";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
-import { formatCost, formatDate, formatDuration, runDurationSeconds } from "@/lib/utils";
+import { formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { useTableSort } from "@/hooks/useTableSort";
 
@@ -33,8 +33,7 @@ export default function AgentsRunsPage() {
       agent_name: (run: AgentRun) => run.agent_name || String(run.agent_id),
       status: (run: AgentRun) => run.status,
       model: (run: AgentRun) => run.model ?? "",
-      tokens_in: (run: AgentRun) => run.tokens_in,
-      tokens_out: (run: AgentRun) => run.tokens_out,
+      tokens: (run: AgentRun) => runTokensTotal(run.tokens_in, run.tokens_out),
       estimated_cost_usd: (run: AgentRun) => run.estimated_cost_usd,
       trigger_source: (run: AgentRun) => run.trigger_source,
       started_at: (run: AgentRun) => run.started_at ?? "",
@@ -161,20 +160,7 @@ export default function AgentsRunsPage() {
               />
               <SortableTh label="Status" sortKey="status" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
               <SortableTh label="Model" sortKey="model" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
-              <SortableTh
-                label="Tokens in"
-                sortKey="tokens_in"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableTh
-                label="Tokens out"
-                sortKey="tokens_out"
-                activeKey={sortKey}
-                direction={sortDir}
-                onSort={toggleSort}
-              />
+              <SortableTh label="Tokens" sortKey="tokens" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
               <SortableTh
                 label="Est. cost"
                 sortKey="estimated_cost_usd"
@@ -218,8 +204,7 @@ export default function AgentsRunsPage() {
                   <RunStatusBadge status={run.status} />
                 </td>
                 <td className="px-4 py-2">{run.model || "-"}</td>
-                <td className="px-4 py-2">{run.tokens_in ?? "-"}</td>
-                <td className="px-4 py-2">{run.tokens_out ?? "-"}</td>
+                <td className="px-4 py-2 tabular-nums">{formatTokens(run.tokens_in, run.tokens_out)}</td>
                 <td className="px-4 py-2">{formatCost(run.estimated_cost_usd)}</td>
                 <td className="px-4 py-2">{run.trigger_source}</td>
                 <td className="px-4 py-2">{formatDate(run.started_at)}</td>
@@ -278,7 +263,7 @@ export default function AgentsRunsPage() {
             }
           />
         ) : (
-          <div className="max-h-[75vh] overflow-y-auto rounded border bg-white">
+          <div className="min-h-0 flex-1 overflow-y-auto rounded border bg-white">
             <pre className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-slate-900">
               {modalContent || "(empty)"}
             </pre>

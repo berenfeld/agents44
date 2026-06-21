@@ -27,7 +27,23 @@ def table_schema(table_name: str):
 def table_rows(table_name: str):
     limit = request.args.get("limit", type=int) or agent_db.DEFAULT_ROW_LIMIT
     offset = request.args.get("offset", type=int) or 0
-    return jsonify(agent_db.list_rows(table_name, limit=limit, offset=offset))
+    sort_by = request.args.get("sort_by", type=str)
+    sort_dir = request.args.get("sort_dir", type=str)
+    filter_column = request.args.get("filter_column", type=str)
+    filter_op = request.args.get("filter_op", type=str)
+    filter_value = request.args.get("filter_value", type=str)
+    return jsonify(
+        agent_db.list_rows(
+            table_name,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            filter_column=filter_column,
+            filter_op=filter_op,
+            filter_value=filter_value,
+        )
+    )
 
 
 @agent_db_bp.post("/tables/<path:table_name>/rows")
