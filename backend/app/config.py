@@ -30,6 +30,11 @@ class Config:
     SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret")
     SQLALCHEMY_DATABASE_URI = _database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Recycle pooled connections; pre-ping avoids 500s after PostgreSQL restarts.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,
+        "pool_recycle": 1800,
+    }
     WORKSPACE_PATH = _resolve_project_path(os.getenv("WORKSPACE_PATH"), PROJECT_ROOT / ".workspace")
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
