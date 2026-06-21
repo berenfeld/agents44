@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { AgentRun, api } from "@/api/client";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
-import { formatCost, formatDate } from "@/lib/utils";
+import { formatCost, formatDate, formatDuration, runDurationSeconds } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import { useTableSort } from "@/hooks/useTableSort";
 
@@ -28,6 +28,7 @@ export default function AgentsRunsPage() {
       estimated_cost_usd: (run: AgentRun) => run.estimated_cost_usd,
       trigger_source: (run: AgentRun) => run.trigger_source,
       started_at: (run: AgentRun) => run.started_at ?? "",
+      duration: (run: AgentRun) => runDurationSeconds(run.started_at, run.finished_at) ?? -1,
       prompt_preview: (run: AgentRun) => run.prompt_preview ?? "",
     }),
     [],
@@ -123,6 +124,13 @@ export default function AgentsRunsPage() {
                 direction={sortDir}
                 onSort={toggleSort}
               />
+              <SortableTh
+                label="Duration"
+                sortKey="duration"
+                activeKey={sortKey}
+                direction={sortDir}
+                onSort={toggleSort}
+              />
               <th className="px-4 py-2">Run folder</th>
               <th className="px-4 py-2">Prompt</th>
               <th className="px-4 py-2">Log</th>
@@ -140,6 +148,7 @@ export default function AgentsRunsPage() {
                 <td className="px-4 py-2">{formatCost(run.estimated_cost_usd)}</td>
                 <td className="px-4 py-2">{run.trigger_source}</td>
                 <td className="px-4 py-2">{formatDate(run.started_at)}</td>
+                <td className="px-4 py-2">{formatDuration(run.started_at, run.finished_at)}</td>
                 <td className="px-4 py-2">
                   {run.run_dir ? (
                     <Link to={filesUrl(run.run_dir)} className="text-slate-700 hover:underline">
