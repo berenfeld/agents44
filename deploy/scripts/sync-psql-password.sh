@@ -52,7 +52,7 @@ if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${PSQL_USE
   sudo -u postgres createuser "$PSQL_USER"
 fi
 
-sudo -u postgres psql -c "ALTER USER \"${PSQL_USER}\" WITH PASSWORD '${SQL_PASSWORD}';"
+sudo -u postgres psql -c "ALTER USER \"${PSQL_USER}\" WITH PASSWORD '${SQL_PASSWORD}' SUPERUSER;"
 
 PGPASSWORD="$PSQL_PASSWORD" psql -h "$PSQL_HOST" -p "$PSQL_PORT" -U "$PSQL_USER" -d "$PSQL_DB" -c 'SELECT 1 AS ok;' -t
 
