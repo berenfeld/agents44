@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.extensions import db
 from app.models.run_status import RunStatus
 from app.models.trigger_source import TriggerSource
+from app.services.workspace import RUN_SUMMARY_FILE
 
 if TYPE_CHECKING:
     from app.models.system_agent import SystemAgent
@@ -55,7 +56,7 @@ class SystemAgentRun(db.Model):
         }
 
     def _read_prompt_preview(self) -> str | None:
-        from app.services.workspace import PROMPT_PREVIEW_CHARS, RUN_SUMMARY_FILE, workspace_root
+        from app.services.workspace import PROMPT_PREVIEW_CHARS, workspace_root
 
         if not self.prompt_path:
             return None
