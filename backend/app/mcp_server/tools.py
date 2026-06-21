@@ -1,20 +1,24 @@
-import json
 import logging
-import re
+import os
 import threading
 from contextvars import ContextVar
 
 from flask import current_app
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.errors import APIClientError
-from app.extensions import db
+from app.models import SystemAgent
+from app.services.db_provisioning import agent_database_url, agent_schema_name, department_schema_name
 from app.services.email import send_email
-from app.services.workspace import list_path, safe_path, workspace_root, write_file
+from app.services.workspace import list_path, write_file
 
 logger = logging.getLogger(__name__)
 
 _run_context: ContextVar[dict] = ContextVar("run_context", default={})
+_agent_engines: dict[str, Engine] = {}
+_engine_lock = threading.Lock()
 
 
 def set_run_context(agent_name: str, department: str, run_id: int) -> None:
@@ -40,30 +44,74 @@ def tool_write_workspace(path: str, content: str) -> dict:
     return write_file(rel, content)
 
 
+def _require_agent() -> SystemAgent:
+    ctx = get_run_context()
+    agent_name = ctx.get("agent_name", "").strip()
+    if not agent_name:
+        raise APIClientError("Agent context required", 403)
+    agent = SystemAgent.query.filter_by(name=agent_name).first()
+    if not agent:
+        raise APIClientError("Agent not found", 404)
+    if not agent.db_user or not agent.db_password:
+        raise APIClientError("Agent database credentials not configured", 404)
+    return agent
+
+
+def _agent_engine(agent: SystemAgent) -> Engine:
+    with _engine_lock:
+        cached = _agent_engines.get(agent.name)
+        if cached is not None:
+            return cached
+
+        url = agent_database_url(
+            host=os.getenv("PSQL_HOST", "localhost"),
+            port=os.getenv("PSQL_PORT", "5432"),
+            database=os.getenv("PSQL_DB", "agents44"),
+            db_user=agent.db_user,
+            db_password=agent.db_password,
+            agent_schema=agent_schema_name(agent.name),
+            department_schema=department_schema_name(agent.department),
+        )
+        engine = create_engine(url, pool_pre_ping=True, pool_size=2, max_overflow=0)
+        _agent_engines[agent.name] = engine
+        return engine
+
+
+def _execute_agent_sql(query: str, *, commit: bool):
+    sql = query.strip()
+    if not sql:
+        raise APIClientError("Query is required", 400)
+
+    agent = _require_agent()
+    conn = _agent_engine(agent).connect()
+    try:
+        result = conn.execute(text(sql))
+        if commit:
+            conn.commit()
+        if result.returns_rows:
+            return [dict(row._mapping) for row in result]
+        rowcount = result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0
+        return {"rowcount": rowcount}
+    except SQLAlchemyError as exc:
+        conn.rollback()
+        message = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+        raise APIClientError(message, 400) from exc
+    finally:
+        conn.close()
+
+
 def tool_read_db(query: str) -> list[dict]:
-    if not query.strip().lower().startswith("select"):
-        raise APIClientError("Only SELECT queries are allowed", 403)
-    result = db.session.execute(text(query))
-    rows = [dict(row._mapping) for row in result]
-    return rows
+    result = _execute_agent_sql(query, commit=False)
+    if isinstance(result, list):
+        return result
+    return []
 
 
 def tool_write_db(query: str) -> dict:
-    ctx = get_run_context()
-    agent_name = ctx.get("agent_name", "")
-    department = ctx.get("department", "")
-    lowered = query.strip().lower()
-    if not lowered.startswith(("insert", "update", "delete")):
-        raise APIClientError("Only INSERT/UPDATE/DELETE allowed", 403)
-    table_match = re.search(r"(?:into|update|from)\s+([a-zA-Z0-9_]+)", lowered)
-    if not table_match:
-        raise APIClientError("Invalid query", 400)
-    table = table_match.group(1)
-    if not (table.startswith(f"{department}_") or table.startswith(f"{agent_name}_")):
-        raise APIClientError("Write not allowed for this table", 403)
-    result = db.session.execute(text(query))
-    db.session.commit()
-    return {"rowcount": result.rowcount}
+    result = _execute_agent_sql(query, commit=True)
+    if isinstance(result, dict):
+        return result
+    return {"rowcount": len(result)}
 
 
 def tool_send_email(subject: str, body: str) -> dict:
