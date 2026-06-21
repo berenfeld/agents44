@@ -10,7 +10,8 @@ import {
   api,
 } from "@/api/client";
 import { ConfirmModal } from "@/components/ui/modal";
-import { Button, Input, Label } from "@/components/ui/primitives";
+import { Input } from "@/components/ui/primitives";
+import { cn } from "@/lib/utils";
 import "react-data-grid/lib/styles.css";
 
 type GridRow = AgentDbRow & {
@@ -173,7 +174,103 @@ function tableApiPath(qualifiedName: string) {
 }
 
 function selectClassName(className?: string) {
-  return `rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 ${className ?? ""}`;
+  return cn(
+    "h-8 rounded-md border border-slate-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400",
+    className,
+  );
+}
+
+function ToolbarIconButton({
+  title,
+  onClick,
+  disabled,
+  variant = "default",
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  variant?: "default" | "outline" | "destructive";
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md disabled:opacity-40",
+        variant === "default" && "bg-slate-900 text-white hover:bg-slate-800",
+        variant === "outline" && "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+        variant === "destructive" && "bg-red-600 text-white hover:bg-red-700",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" strokeLinecap="round" />
+      <path d="M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="m5 12 4 4L19 6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="m9 18 6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ToolbarDivider() {
+  return <span className="mx-0.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden="true" />;
 }
 
 export default function AgentDatabasePage() {
@@ -468,158 +565,155 @@ export default function AgentDatabasePage() {
         </aside>
 
         <section className="min-w-0 flex-1 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={addRow} disabled={!schema || busy}>
-              Add row
-            </Button>
-            <Button
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border bg-white px-2 py-1.5">
+            <ToolbarIconButton title="Add row" onClick={addRow} disabled={!schema || busy}>
+              <PlusIcon />
+            </ToolbarIconButton>
+            <ToolbarIconButton
+              title="Refresh"
               variant="outline"
               onClick={() => selectedTable && loadTableData(selectedTable, query)}
               disabled={!selectedTable || loading || busy}
             >
-              Refresh
-            </Button>
-            <Button
+              <RefreshIcon />
+            </ToolbarIconButton>
+            <ToolbarIconButton
+              title={`Delete selected (${deleteCount})`}
               variant="destructive"
               onClick={() => setDeleteOpen(true)}
               disabled={deleteCount === 0 || busy}
             >
-              Delete selected ({deleteCount})
-            </Button>
-            {busy ? <span className="text-sm text-slate-500">Saving…</span> : null}
-          </div>
+              <TrashIcon />
+            </ToolbarIconButton>
 
-          {schema ? (
-            <div className="rounded-lg border bg-white p-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <div>
-                  <Label htmlFor="filter-column">Filter column</Label>
-                  <select
-                    id="filter-column"
-                    value={draftFilter.filterColumn}
-                    onChange={(event) => {
-                      const filterColumn = event.target.value;
-                      const column = schema.columns.find((item) => item.name === filterColumn);
-                      const ops = column ? filterOpsForType(column.type) : [];
-                      setDraftFilter((current) => ({
-                        ...current,
-                        filterColumn,
-                        filterOp: ops.includes(current.filterOp as AgentDbFilterOp) ? current.filterOp : ops[0] ?? "",
-                      }));
-                    }}
-                    className={selectClassName("mt-1 min-w-[10rem]")}
-                  >
-                    <option value="">(none)</option>
-                    {schema.columns.map((col) => (
-                      <option key={col.name} value={col.name}>
-                        {col.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <Label htmlFor="filter-op">Operator</Label>
-                  <select
-                    id="filter-op"
-                    value={draftFilter.filterOp}
-                    onChange={(event) =>
-                      setDraftFilter((current) => ({
-                        ...current,
-                        filterOp: event.target.value as AgentDbFilterOp | "",
-                      }))
-                    }
-                    disabled={!draftFilter.filterColumn}
-                    className={selectClassName("mt-1 min-w-[8rem]")}
-                  >
-                    <option value="">(select)</option>
-                    {availableFilterOps.map((op) => (
-                      <option key={op} value={op}>
-                        {FILTER_OP_LABELS[op]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="min-w-[12rem] flex-1">
-                  <Label htmlFor="filter-value">Value</Label>
-                  <Input
-                    id="filter-value"
-                    value={draftFilter.filterValue}
-                    onChange={(event) =>
-                      setDraftFilter((current) => ({ ...current, filterValue: event.target.value }))
-                    }
-                    disabled={
-                      !draftFilter.filterColumn ||
-                      !draftFilter.filterOp ||
-                      NULL_FILTER_OPS.has(draftFilter.filterOp as AgentDbFilterOp)
-                    }
-                    placeholder={
-                      draftFilter.filterOp === "ilike" || draftFilter.filterOp === "like"
-                        ? "contains…"
-                        : "value…"
-                    }
-                    className="mt-1"
-                  />
-                </div>
-                <Button onClick={applyFilter} disabled={!schema || loading}>
-                  Apply filter
-                </Button>
+            {schema ? (
+              <>
+                <ToolbarDivider />
+                <span className="shrink-0 text-xs font-medium text-slate-500">Filter</span>
+                <select
+                  id="filter-column"
+                  aria-label="Filter column"
+                  value={draftFilter.filterColumn}
+                  onChange={(event) => {
+                    const filterColumn = event.target.value;
+                    const column = schema.columns.find((item) => item.name === filterColumn);
+                    const ops = column ? filterOpsForType(column.type) : [];
+                    setDraftFilter((current) => ({
+                      ...current,
+                      filterColumn,
+                      filterOp: ops.includes(current.filterOp as AgentDbFilterOp) ? current.filterOp : ops[0] ?? "",
+                    }));
+                  }}
+                  className={selectClassName("w-28 shrink-0")}
+                >
+                  <option value="">Column</option>
+                  {schema.columns.map((col) => (
+                    <option key={col.name} value={col.name}>
+                      {col.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  id="filter-op"
+                  aria-label="Filter operator"
+                  value={draftFilter.filterOp}
+                  onChange={(event) =>
+                    setDraftFilter((current) => ({
+                      ...current,
+                      filterOp: event.target.value as AgentDbFilterOp | "",
+                    }))
+                  }
+                  disabled={!draftFilter.filterColumn}
+                  className={selectClassName("w-20 shrink-0")}
+                >
+                  <option value="">Op</option>
+                  {availableFilterOps.map((op) => (
+                    <option key={op} value={op}>
+                      {FILTER_OP_LABELS[op]}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  id="filter-value"
+                  aria-label="Filter value"
+                  value={draftFilter.filterValue}
+                  onChange={(event) =>
+                    setDraftFilter((current) => ({ ...current, filterValue: event.target.value }))
+                  }
+                  disabled={
+                    !draftFilter.filterColumn ||
+                    !draftFilter.filterOp ||
+                    NULL_FILTER_OPS.has(draftFilter.filterOp as AgentDbFilterOp)
+                  }
+                  placeholder="Value"
+                  className="h-8 w-24 shrink-0 px-2 text-sm"
+                />
+                <ToolbarIconButton title="Apply filter" onClick={applyFilter} disabled={!schema || loading}>
+                  <CheckIcon />
+                </ToolbarIconButton>
                 {query.filterColumn && query.filterOp ? (
-                  <Button variant="outline" onClick={clearFilter}>
-                    Clear filter
-                  </Button>
+                  <ToolbarIconButton title="Clear filter" variant="outline" onClick={clearFilter}>
+                    <XIcon />
+                  </ToolbarIconButton>
                 ) : null}
-              </div>
-              {query.filterColumn && query.filterOp ? (
-                <p className="mt-2 text-xs text-slate-500">
-                  Active filter: {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
-                  {!NULL_FILTER_OPS.has(query.filterOp as AgentDbFilterOp) ? ` "${query.filterValue}"` : ""}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
+              </>
+            ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="row-limit">Rows</Label>
-              <select
-                id="row-limit"
-                value={query.limit}
-                onChange={(event) =>
-                  setQuery((current) => ({
-                    ...current,
-                    limit: Number(event.target.value),
-                    offset: 0,
-                  }))
-                }
-                disabled={!selectedTable || loading}
-                className={selectClassName()}
-              >
-                {ROW_LIMIT_OPTIONS.map((limit) => (
-                  <option key={limit} value={limit}>
-                    {limit}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <Button
+            <ToolbarDivider />
+            <select
+              id="row-limit"
+              aria-label="Rows per page"
+              value={query.limit}
+              onChange={(event) =>
+                setQuery((current) => ({
+                  ...current,
+                  limit: Number(event.target.value),
+                  offset: 0,
+                }))
+              }
+              disabled={!selectedTable || loading}
+              className={selectClassName("w-16 shrink-0")}
+            >
+              {ROW_LIMIT_OPTIONS.map((limit) => (
+                <option key={limit} value={limit}>
+                  {limit}
+                </option>
+              ))}
+            </select>
+            <ToolbarIconButton
+              title="Previous page"
               variant="outline"
               onClick={() => setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - current.limit) }))}
               disabled={!canGoPrev || loading}
             >
-              Previous
-            </Button>
-            <Button
+              <ChevronLeftIcon />
+            </ToolbarIconButton>
+            <ToolbarIconButton
+              title="Next page"
               variant="outline"
               onClick={() => setQuery((current) => ({ ...current, offset: current.offset + current.limit }))}
               disabled={!canGoNext || loading}
             >
-              Next
-            </Button>
-            {selectedTable ? (
-              <span className="text-sm text-slate-500">
-                {selectedTable} · showing {rangeStart}–{rangeEnd} of {total}
-              </span>
-            ) : null}
+              <ChevronRightIcon />
+            </ToolbarIconButton>
+
+            <span className="ml-auto shrink-0 truncate text-xs text-slate-500">
+              {busy ? "Saving… · " : ""}
+              {selectedTable ? (
+                <>
+                  {selectedTable} · {rangeStart}–{rangeEnd}/{total}
+                  {query.filterColumn && query.filterOp ? (
+                    <>
+                      {" "}
+                      · {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
+                      {!NULL_FILTER_OPS.has(query.filterOp as AgentDbFilterOp) ? ` "${query.filterValue}"` : ""}
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                "Select a table"
+              )}
+            </span>
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-white">
