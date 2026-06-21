@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import DataGrid, { SelectColumn, type Column, type RowsChangeData } from "react-data-grid";
 import {
   AgentDbColumn,
@@ -32,6 +33,19 @@ type RowQueryState = {
 };
 
 const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
+const DEFAULT_ROW_LIMIT = 100;
+const ALLOWED_FILTER_OPS = new Set<string>([
+  "eq",
+  "ne",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "ilike",
+  "like",
+  "is_null",
+  "is_not_null",
+]);
 
 const FILTER_OP_LABELS: Record<AgentDbFilterOp, string> = {
   eq: "==",
@@ -50,7 +64,7 @@ const NULL_FILTER_OPS = new Set<AgentDbFilterOp>(["is_null", "is_not_null"]);
 
 function defaultQueryState(): RowQueryState {
   return {
-    limit: 100,
+    limit: DEFAULT_ROW_LIMIT,
     offset: 0,
     sortBy: null,
     sortDir: "asc",
@@ -58,6 +72,69 @@ function defaultQueryState(): RowQueryState {
     filterOp: "",
     filterValue: "",
   };
+}
+
+function parseAgentDbSearchParams(searchParams: URLSearchParams): { table: string | null; query: RowQueryState } {
+  const query = defaultQueryState();
+
+  const limitRaw = searchParams.get("limit");
+  if (limitRaw) {
+    const limit = Number(limitRaw);
+    if (ROW_LIMIT_OPTIONS.includes(limit as (typeof ROW_LIMIT_OPTIONS)[number])) {
+      query.limit = limit;
+    }
+  }
+
+  const offsetRaw = searchParams.get("offset");
+  if (offsetRaw !== null) {
+    const offset = Number(offsetRaw);
+    if (!Number.isNaN(offset) && offset >= 0) {
+      query.offset = offset;
+    }
+  }
+
+  const sortBy = searchParams.get("sort_by");
+  if (sortBy) {
+    query.sortBy = sortBy;
+    query.sortDir = searchParams.get("sort_dir") === "desc" ? "desc" : "asc";
+  }
+
+  const filterColumn = searchParams.get("filter_column") ?? "";
+  const filterOp = searchParams.get("filter_op") ?? "";
+  if (filterColumn && filterOp && ALLOWED_FILTER_OPS.has(filterOp)) {
+    query.filterColumn = filterColumn;
+    query.filterOp = filterOp as AgentDbFilterOp;
+    query.filterValue = searchParams.get("filter_value") ?? "";
+  }
+
+  return { table: searchParams.get("table"), query };
+}
+
+function buildAgentDbSearchParams(table: string | null, query: RowQueryState): URLSearchParams {
+  const params = new URLSearchParams();
+  if (table) {
+    params.set("table", table);
+  }
+  if (query.limit !== DEFAULT_ROW_LIMIT) {
+    params.set("limit", String(query.limit));
+  }
+  if (query.offset > 0) {
+    params.set("offset", String(query.offset));
+  }
+  if (query.sortBy) {
+    params.set("sort_by", query.sortBy);
+    if (query.sortDir === "desc") {
+      params.set("sort_dir", "desc");
+    }
+  }
+  if (query.filterColumn && query.filterOp) {
+    params.set("filter_column", query.filterColumn);
+    params.set("filter_op", query.filterOp);
+    if (!NULL_FILTER_OPS.has(query.filterOp) && query.filterValue !== "") {
+      params.set("filter_value", query.filterValue);
+    }
+  }
+  return params;
 }
 
 function filterOpsForType(columnType: string): AgentDbFilterOp[] {
@@ -274,8 +351,13 @@ function ToolbarDivider() {
 }
 
 export default function AgentDatabasePage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { table: selectedTable, query } = useMemo(
+    () => parseAgentDbSearchParams(searchParams),
+    [searchParams],
+  );
+
   const [tables, setTables] = useState<AgentDbTable[]>([]);
-  const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [schema, setSchema] = useState<AgentDbSchema | null>(null);
   const [rows, setRows] = useState<GridRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -284,21 +366,31 @@ export default function AgentDatabasePage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [query, setQuery] = useState<RowQueryState>(() => defaultQueryState());
   const [draftFilter, setDraftFilter] = useState({
-    filterColumn: "",
-    filterOp: "" as AgentDbFilterOp | "",
-    filterValue: "",
+    filterColumn: query.filterColumn,
+    filterOp: query.filterOp,
+    filterValue: query.filterValue,
   });
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const setTableAndQuery = useCallback(
+    (table: string | null, nextQuery: RowQueryState, options?: { replace?: boolean }) => {
+      setSearchParams(buildAgentDbSearchParams(table, nextQuery), { replace: options?.replace ?? true });
+    },
+    [setSearchParams],
+  );
+
+  const patchQuery = useCallback(
+    (patch: Partial<RowQueryState>) => {
+      setTableAndQuery(selectedTable, { ...query, ...patch });
+    },
+    [query, selectedTable, setTableAndQuery],
+  );
 
   const loadTables = useCallback(async () => {
     const res = await api.get<AgentDbTable[]>("/agent-db/tables");
     setTables(res.data);
-    if (!selectedTable && res.data.length > 0) {
-      setSelectedTable(res.data[0].qualified_name);
-    }
-  }, [selectedTable]);
+  }, []);
 
   const tablesBySchema = useMemo(() => {
     const grouped = new Map<string, AgentDbTable[]>();
@@ -341,6 +433,28 @@ export default function AgentDatabasePage() {
   }, [loadTables]);
 
   useEffect(() => {
+    if (tables.length === 0) {
+      return;
+    }
+    const { table: urlTable, query: urlQuery } = parseAgentDbSearchParams(searchParams);
+    if (!urlTable) {
+      setTableAndQuery(tables[0].qualified_name, urlQuery, { replace: true });
+      return;
+    }
+    if (!tables.some((table) => table.qualified_name === urlTable)) {
+      setTableAndQuery(tables[0].qualified_name, urlQuery, { replace: true });
+    }
+  }, [tables, searchParams, setTableAndQuery]);
+
+  useEffect(() => {
+    setDraftFilter({
+      filterColumn: query.filterColumn,
+      filterOp: query.filterOp,
+      filterValue: query.filterValue,
+    });
+  }, [query.filterColumn, query.filterOp, query.filterValue]);
+
+  useEffect(() => {
     if (selectedTable) {
       loadTableData(selectedTable, query).catch(console.error);
     }
@@ -355,14 +469,16 @@ export default function AgentDatabasePage() {
     };
   }, []);
 
-  const handleSort = useCallback((column: string) => {
-    setQuery((current) => {
-      if (current.sortBy === column) {
-        return { ...current, sortDir: current.sortDir === "asc" ? "desc" : "asc", offset: 0 };
+  const handleSort = useCallback(
+    (column: string) => {
+      if (query.sortBy === column) {
+        patchQuery({ sortDir: query.sortDir === "asc" ? "desc" : "asc", offset: 0 });
+        return;
       }
-      return { ...current, sortBy: column, sortDir: "asc", offset: 0 };
-    });
-  }, []);
+      patchQuery({ sortBy: column, sortDir: "asc", offset: 0 });
+    },
+    [patchQuery, query.sortBy, query.sortDir],
+  );
 
   const columns = useMemo(
     () => (schema ? buildColumns(schema, query.sortBy, query.sortDir, handleSort) : []),
@@ -392,24 +508,22 @@ export default function AgentDatabasePage() {
       return;
     }
     setError(null);
-    setQuery((current) => ({
-      ...current,
+    patchQuery({
       offset: 0,
       filterColumn: draftFilter.filterColumn,
       filterOp: draftFilter.filterOp,
       filterValue: draftFilter.filterValue,
-    }));
+    });
   };
 
   const clearFilter = () => {
     setDraftFilter({ filterColumn: "", filterOp: "", filterValue: "" });
-    setQuery((current) => ({
-      ...current,
+    patchQuery({
       offset: 0,
       filterColumn: "",
       filterOp: "",
       filterValue: "",
-    }));
+    });
   };
 
   const scheduleSave = useCallback(
@@ -535,11 +649,7 @@ export default function AgentDatabasePage() {
                     <li key={table.qualified_name}>
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedTable(table.qualified_name);
-                          setQuery(defaultQueryState());
-                          setDraftFilter({ filterColumn: "", filterOp: "", filterValue: "" });
-                        }}
+                        onClick={() => setTableAndQuery(table.qualified_name, defaultQueryState())}
                         className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
                           selectedTable === table.qualified_name
                             ? "bg-slate-900 text-white"
@@ -665,11 +775,10 @@ export default function AgentDatabasePage() {
               aria-label="Rows per page"
               value={query.limit}
               onChange={(event) =>
-                setQuery((current) => ({
-                  ...current,
+                patchQuery({
                   limit: Number(event.target.value),
                   offset: 0,
-                }))
+                })
               }
               disabled={!selectedTable || loading}
               className={selectClassName("w-16 shrink-0")}
@@ -683,7 +792,7 @@ export default function AgentDatabasePage() {
             <ToolbarIconButton
               title="Previous page"
               variant="outline"
-              onClick={() => setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - current.limit) }))}
+              onClick={() => patchQuery({ offset: Math.max(0, query.offset - query.limit) })}
               disabled={!canGoPrev || loading}
             >
               <ChevronLeftIcon />
@@ -691,7 +800,7 @@ export default function AgentDatabasePage() {
             <ToolbarIconButton
               title="Next page"
               variant="outline"
-              onClick={() => setQuery((current) => ({ ...current, offset: current.offset + current.limit }))}
+              onClick={() => patchQuery({ offset: query.offset + query.limit })}
               disabled={!canGoNext || loading}
             >
               <ChevronRightIcon />
