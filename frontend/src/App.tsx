@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
+import { AppNav } from "@/components/ui/app-nav";
 import { ConfirmModal } from "@/components/ui/modal";
 import AgentsPage from "@/pages/AgentsPage";
 import AgentsRunsPage from "@/pages/AgentsRunsPage";
@@ -14,41 +15,20 @@ import { AppFooter } from "@/components/ui/app-footer";
 
 function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-2 rounded-md text-sm ${isActive ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100"}`;
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
       <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-4">
-            <strong>Agents44</strong>
-            <nav className="flex gap-2">
-              <NavLink to="/agents" className={linkClass}>
-                Agents
-              </NavLink>
-              <NavLink to="/agents_runs" className={linkClass}>
-                Agents Runs
-              </NavLink>
-              <NavLink to="/departments" className={linkClass}>
-                Departments
-              </NavLink>
-              <NavLink to="/agents_files" className={linkClass}>
-                Agent Files
-              </NavLink>
-              <NavLink to="/agent_database" className={linkClass}>
-                Agent Database
-              </NavLink>
-              <NavLink to="/settings" className={linkClass}>
-                Settings
-              </NavLink>
-            </nav>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <span>{email}</span>
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center justify-between gap-3 text-sm md:order-2">
+            <span className="min-w-0 truncate text-slate-600">{email}</span>
             <Button variant="outline" onClick={() => setLogoutOpen(true)}>
               Logout
             </Button>
+          </div>
+          <div className="flex flex-col gap-3 md:order-1 md:flex-row md:items-center md:gap-4">
+            <strong className="shrink-0">Agents44</strong>
+            <AppNav />
           </div>
         </div>
       </header>
@@ -106,7 +86,7 @@ export default function App() {
   if (loading) {
     return (
       <div className="flex min-h-screen flex-col bg-slate-50">
-        <div className="flex-1 p-8">Loading...</div>
+        <div className="flex flex-1 items-center justify-center p-8">Loading...</div>
         <AppFooter />
       </div>
     );

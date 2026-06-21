@@ -350,8 +350,8 @@ export default function AgentFilesPage() {
 
       {loadError ? <p className="rounded bg-amber-50 p-3 text-sm text-amber-900">{loadError}</p> : null}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="rounded-lg border bg-white lg:col-span-1">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded-lg border bg-white md:col-span-1">
           <div className="border-b px-3 py-2">
             <p className="text-sm font-medium text-slate-700">
               {currentFolder ? `${currentFolder}/` : ".workspace/"}
@@ -491,7 +491,7 @@ export default function AgentFilesPage() {
           )}
         </div>
 
-        <div className="min-w-0 space-y-3 rounded-lg border bg-white p-4 lg:col-span-2">
+        <div className="min-w-0 space-y-3 rounded-lg border bg-white p-4 md:col-span-2">
           {!selectedPath ? (
             <p className="text-sm text-slate-500">Select a file to view or edit.</p>
           ) : (

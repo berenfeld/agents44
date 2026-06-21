@@ -5,6 +5,14 @@ import { SortableTh } from "@/components/ui/sortable-table";
 import { Button, Input, Label } from "@/components/ui/primitives";
 import { useTableSort } from "@/hooks/useTableSort";
 import { formatDate } from "@/lib/utils";
+import {
+  DataCard,
+  DataCardActions,
+  DataCardField,
+  DataCardTitle,
+  DesktopTableShell,
+  MobileCardList,
+} from "@/components/ui/data-card";
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -81,42 +89,65 @@ export default function DepartmentsPage() {
       {loading ? (
         <p>Loading...</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left">
-              <tr>
-                <SortableTh label="Name" sortKey="name" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
-                <SortableTh
-                  label="Created"
-                  sortKey="created_at"
-                  activeKey={sortKey}
-                  direction={sortDir}
-                  onSort={toggleSort}
-                />
-                <th className="px-4 py-2">Agents</th>
-                <th className="px-4 py-2">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((department) => (
-                <tr key={department.id} className="border-t">
-                  <td className="px-4 py-2 font-medium">{department.name}</td>
-                  <td className="px-4 py-2">{formatDate(department.created_at)}</td>
-                  <td className="px-4 py-2">{agentCount(department.name)}</td>
-                  <td className="px-4 py-2">
-                    <Button
-                      variant="outline"
-                      disabled={agentCount(department.name) > 0}
-                      onClick={() => setDeleteTarget(department)}
-                    >
-                      Delete
-                    </Button>
-                  </td>
+        <>
+          <DesktopTableShell>
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left">
+                <tr>
+                  <SortableTh label="Name" sortKey="name" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
+                  <SortableTh
+                    label="Created"
+                    sortKey="created_at"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={toggleSort}
+                  />
+                  <th className="px-4 py-2">Agents</th>
+                  <th className="px-4 py-2">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {sorted.map((department) => (
+                  <tr key={department.id} className="border-t">
+                    <td className="px-4 py-2 font-medium">{department.name}</td>
+                    <td className="px-4 py-2">{formatDate(department.created_at)}</td>
+                    <td className="px-4 py-2">{agentCount(department.name)}</td>
+                    <td className="px-4 py-2">
+                      <Button
+                        variant="outline"
+                        disabled={agentCount(department.name) > 0}
+                        onClick={() => setDeleteTarget(department)}
+                      >
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </DesktopTableShell>
+
+          <MobileCardList>
+            {sorted.map((department) => (
+              <DataCard key={department.id}>
+                <DataCardTitle>{department.name}</DataCardTitle>
+                <dl>
+                  <DataCardField label="Created">{formatDate(department.created_at)}</DataCardField>
+                  <DataCardField label="Agents">{agentCount(department.name)}</DataCardField>
+                </dl>
+                <DataCardActions>
+                  <Button
+                    variant="outline"
+                    disabled={agentCount(department.name) > 0}
+                    onClick={() => setDeleteTarget(department)}
+                  >
+                    Delete
+                  </Button>
+                </DataCardActions>
+              </DataCard>
+            ))}
+          </MobileCardList>
+        </>
       )}
 
       <ConfirmModal

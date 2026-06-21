@@ -58,6 +58,7 @@ def delete_department(department_id: int):
     conn = db.session.connection()
     drop_department_schema(conn, row.name)
     db.session.delete(row)
-    db.session.commit()
+    db.session.flush()
     refresh_all_cross_grants(conn)
+    db.session.commit()
     return jsonify({"deleted": department_id})

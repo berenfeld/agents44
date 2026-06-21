@@ -1,104 +1,80 @@
-import json
+import asyncio
 import logging
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from app.mcp_server.tools import TOOLS, set_run_context
+import uvicorn
+from mcp.server.fastmcp import Context, FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+
+from app.mcp_server.context import run_tool
+from app.mcp_server.tools import (
+    tool_read_db,
+    tool_read_workspace,
+    tool_send_email,
+    tool_write_db,
+    tool_write_workspace,
+)
 
 logger = logging.getLogger(__name__)
 
-MCP_TOOL_ERROR = "Tool execution failed"
-
-
-class ReuseAddrHTTPServer(ThreadingHTTPServer):
-    allow_reuse_address = True
-
-
-class MCPHandler(BaseHTTPRequestHandler):
-    server_version = "Agents44MCP/1.0"
-
-    def log_message(self, format, *args):
-        logger.debug("MCP %s - %s", self.address_string(), format % args)
-
-    def _read_json(self):
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length) if length else b"{}"
-        return json.loads(raw.decode("utf-8") or "{}")
-
-    def _set_context_from_headers(self):
-        set_run_context(
-            self.headers.get("X-Agent-Name", ""),
-            self.headers.get("X-Agent-Department", ""),
-            int(self.headers.get("X-Run-Id", "0") or 0),
-        )
-
-    def _send_json(self, code: int, payload: dict):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        if self.path.startswith("/sse"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
-            self.end_headers()
-            self.wfile.write(b"data: {\"status\":\"ready\"}\n\n")
-            return
-        if self.path == "/health":
-            self._send_json(200, {"ok": True})
-            return
-        self._send_json(404, {"error": "Not found"})
-
-    def do_POST(self):
-        self._set_context_from_headers()
-        if self.path == "/tools/call":
-            payload = self._read_json()
-            tool_name = payload.get("name")
-            arguments = payload.get("arguments", {})
-            tool = TOOLS.get(tool_name)
-            if not tool:
-                self._send_json(404, {"error": "Unknown tool"})
-                return
-            from app import get_app
-            from app.errors import APIClientError
-
-            app = get_app()
-            with app.app_context():
-                try:
-                    result = tool(**arguments)
-                except APIClientError as exc:
-                    self._send_json(exc.status_code, {"error": exc.message})
-                    return
-                except Exception:
-                    logger.exception("MCP tool %s failed", tool_name)
-                    self._send_json(500, {"error": MCP_TOOL_ERROR})
-                    return
-            self._send_json(200, {"result": result})
-            return
-        if self.path == "/tools/list":
-            self._send_json(
-                200,
-                {
-                    "tools": [
-                        {"name": "read_workspace", "arguments": ["path"]},
-                        {"name": "write_workspace", "arguments": ["path", "content"]},
-                        {"name": "read_db", "arguments": ["query"]},
-                        {"name": "write_db", "arguments": ["query"]},
-                        {"name": "send_email", "arguments": ["subject", "body"]},
-                    ]
-                },
-            )
-            return
-        self._send_json(404, {"error": "Not found"})
-
-
-_mcp_thread = None
+_mcp_thread: threading.Thread | None = None
 _mcp_started = False
+_mcp_instance: FastMCP | None = None
+_mcp_port: int | None = None
+
+
+def _build_mcp_server(port: int) -> FastMCP:
+    global _mcp_instance, _mcp_port
+    if _mcp_instance is not None and _mcp_port == port:
+        return _mcp_instance
+
+    mcp = FastMCP(
+        "agents44",
+        instructions="Agents44 platform tools for workspace files, PostgreSQL, and email.",
+        host="127.0.0.1",
+        port=port,
+        sse_path="/sse",
+        message_path="/messages/",
+    )
+
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_check(request: Request) -> Response:
+        return JSONResponse({"ok": True})
+
+    @mcp.tool(
+        description="List files and folders under a workspace path relative to the workspace root.",
+    )
+    def read_workspace(path: str = "", ctx: Context = ...) -> dict:
+        return run_tool(ctx, tool_read_workspace, path)
+
+    @mcp.tool(
+        description="Write a file under the agent or department workspace prefix.",
+    )
+    def write_workspace(path: str, content: str, ctx: Context = ...) -> dict:
+        return run_tool(ctx, tool_write_workspace, path, content)
+
+    @mcp.tool(
+        description="Run a read-only SQL query against the agent database connection.",
+    )
+    def read_db(query: str, ctx: Context = ...) -> list[dict]:
+        return run_tool(ctx, tool_read_db, query)
+
+    @mcp.tool(
+        description="Run a SQL statement that changes data or schema. Commits automatically.",
+    )
+    def write_db(query: str, ctx: Context = ...) -> dict:
+        return run_tool(ctx, tool_write_db, query)
+
+    @mcp.tool(
+        description="Send an email to the platform administrator.",
+    )
+    def send_email(subject: str, body: str, ctx: Context = ...) -> dict:
+        return run_tool(ctx, tool_send_email, subject, body)
+
+    _mcp_instance = mcp
+    _mcp_port = port
+    return mcp
 
 
 def start_mcp_server(app, port: int) -> None:
@@ -107,19 +83,28 @@ def start_mcp_server(app, port: int) -> None:
     if _mcp_started and _mcp_thread and _mcp_thread.is_alive():
         return
 
-    def _run():
+    def _run() -> None:
         global _mcp_started
+        mcp = _build_mcp_server(port)
+        starlette_app = mcp.sse_app()
+        config = uvicorn.Config(
+            starlette_app,
+            host="127.0.0.1",
+            port=port,
+            log_level="info",
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
         try:
-            server = ReuseAddrHTTPServer(("127.0.0.1", port), MCPHandler)
+            logger.info("MCP server listening on 127.0.0.1:%s (SSE /sse)", port)
+            _mcp_started = True
+            asyncio.run(server.serve())
         except OSError as exc:
             if exc.errno == 98:
                 logger.warning("MCP server port %s already in use; reusing existing listener", port)
                 _mcp_started = True
                 return
             raise
-        logger.info("MCP server listening on 127.0.0.1:%s", port)
-        _mcp_started = True
-        server.serve_forever()
 
     _mcp_thread = threading.Thread(target=_run, daemon=True, name="mcp-server")
     _mcp_thread.start()

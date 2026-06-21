@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Button, Input, Label, Switch } from "@/components/ui/primitives";
 import { getCrontabError } from "@/lib/crontab";
 import { getTimeoutError, formatTimeoutSeconds, parseTimeoutInput } from "@/lib/timeout";
+import { cn } from "@/lib/utils";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -31,6 +32,37 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+function FormField({
+  label,
+  htmlFor,
+  labelExtra,
+  className,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  labelExtra?: React.ReactNode;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-[minmax(0,7rem)_1fr] items-center gap-x-3 gap-y-1",
+        className,
+      )}
+    >
+      <div className="flex items-center justify-end gap-1.5">
+        <Label htmlFor={htmlFor} className="mb-0 text-right">
+          {label}
+        </Label>
+        {labelExtra}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
 export function AgentFormDialog({
   open,
   onOpenChange,
@@ -44,6 +76,7 @@ export function AgentFormDialog({
 }) {
   const [models, setModels] = useState<ModelsResponse>({ models: [], default: "" });
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [created, setCreated] = useState(false);
   const {
     register,
     handleSubmit,
@@ -65,7 +98,10 @@ export function AgentFormDialog({
   });
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setCreated(false);
+      return;
+    }
 
     let cancelled = false;
     Promise.all([api.get<ModelsResponse>("/models"), api.get<Department[]>("/departments")]).then(
@@ -91,13 +127,24 @@ export function AgentFormDialog({
 
   const enabled = watch("enabled");
 
+  const submitLabel = agent
+    ? isSubmitting
+      ? "Saving..."
+      : "Save"
+    : created
+      ? "Created"
+      : isSubmitting
+        ? "Creating..."
+        : "Create";
+
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={agent ? "Edit Agent" : "New Agent"}>
       <form
-        className="space-y-4"
+        className="space-y-2.5"
         onSubmit={handleSubmit(async (values) => {
           const timeoutSeconds = parseTimeoutInput(values.timeout);
           if (timeoutSeconds === null) return;
+          setCreated(false);
           await onSubmit(
             buildAgentWritePayload({
               name: values.name,
@@ -108,16 +155,18 @@ export function AgentFormDialog({
               timeout_seconds: timeoutSeconds,
             }),
           );
+          if (!agent) {
+            setCreated(true);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
           onOpenChange(false);
         })}
       >
-        <div>
-          <Label htmlFor="name">Name</Label>
+        <FormField label="Name" htmlFor="name">
           <Input id="name" {...register("name")} disabled={!!agent} />
           {errors.name && <p className="text-sm text-red-600">{errors.name.message}</p>}
-        </div>
-        <div>
-          <Label htmlFor="department">Department</Label>
+        </FormField>
+        <FormField label="Department" htmlFor="department">
           <select
             id="department"
             className="w-full rounded-md border px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-500"
@@ -135,9 +184,8 @@ export function AgentFormDialog({
             )}
           </select>
           {errors.department && <p className="text-sm text-red-600">{errors.department.message}</p>}
-        </div>
-        <div>
-          <Label htmlFor="model">Model</Label>
+        </FormField>
+        <FormField label="Model" htmlFor="model">
           <select id="model" className="w-full rounded-md border px-3 py-2 text-sm" {...register("model")}>
             {models.models.map((model) => (
               <option key={model} value={model}>
@@ -146,32 +194,27 @@ export function AgentFormDialog({
             ))}
           </select>
           {errors.model && <p className="text-sm text-red-600">{errors.model.message}</p>}
-        </div>
-        <div>
-          <div className="mb-1 flex items-center gap-1.5">
-            <Label htmlFor="crond">Cron schedule</Label>
-            <CrontabHelperLink />
-          </div>
+        </FormField>
+        <FormField label="Cron schedule" htmlFor="crond" labelExtra={<CrontabHelperLink />}>
           <Input id="crond" placeholder="0 9 * * *" {...register("crond")} />
           {errors.crond && <p className="text-sm text-red-600">{errors.crond.message}</p>}
-        </div>
-        <div>
-          <Label htmlFor="timeout" className="mb-1 block">
-            Timeout (mm:ss)
-          </Label>
+        </FormField>
+        <FormField label="Timeout (mm:ss)" htmlFor="timeout">
           <Input id="timeout" placeholder="5:00" className="font-mono" {...register("timeout")} />
           {errors.timeout && <p className="text-sm text-red-600">{errors.timeout.message}</p>}
+        </FormField>
+        <div className="grid grid-cols-[minmax(0,7rem)_1fr] items-center gap-x-3">
+          <Label className="mb-0 text-right">Enabled</Label>
+          <div className="flex justify-end">
+            <Switch checked={enabled} onCheckedChange={(value) => setValue("enabled", value, { shouldValidate: true })} />
+          </div>
         </div>
-        <div className="flex items-center justify-between">
-          <Label>Enabled</Label>
-          <Switch checked={enabled} onCheckedChange={(value) => setValue("enabled", value, { shouldValidate: true })} />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
             Cancel
           </Button>
           <Button type="submit" disabled={isSubmitting || (!agent && departments.length === 0)}>
-            {agent ? "Save" : "Create"}
+            {submitLabel}
           </Button>
         </div>
       </form>

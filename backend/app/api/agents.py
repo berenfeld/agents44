@@ -87,8 +87,9 @@ def create_agent():
         db_password=creds["db_password"],
     )
     db.session.add(agent)
-    db.session.commit()
+    db.session.flush()
     refresh_all_cross_grants(conn)
+    db.session.commit()
     ensure_agent_folder(agent.name)
     sync_scheduler_jobs()
     return jsonify(agent.to_dict()), 201
@@ -135,8 +136,9 @@ def delete_agent(agent_id: int):
     conn = db.session.connection()
     drop_agent_db_access(conn, agent_name=agent.name, db_user=agent.db_user)
     db.session.delete(agent)
-    db.session.commit()
+    db.session.flush()
     refresh_all_cross_grants(conn)
+    db.session.commit()
     sync_scheduler_jobs()
     return jsonify({"deleted": agent_id})
 

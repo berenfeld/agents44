@@ -12,6 +12,13 @@ import {
 } from "@/api/client";
 import { ConfirmModal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/primitives";
+import {
+  DataCard,
+  DataCardField,
+  DataCardTitle,
+  MobileCardList,
+} from "@/components/ui/data-card";
+import { PanelCard, SplitPanelLayout } from "@/components/ui/split-panel-layout";
 import { cn } from "@/lib/utils";
 import "react-data-grid/lib/styles.css";
 
@@ -252,7 +259,7 @@ function tableApiPath(qualifiedName: string) {
 
 function selectClassName(className?: string) {
   return cn(
-    "h-8 rounded-md border border-slate-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400",
+    "h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 md:h-8 md:w-auto md:px-2",
     className,
   );
 }
@@ -622,6 +629,85 @@ export default function AgentDatabasePage() {
   const canGoPrev = query.offset > 0;
   const canGoNext = query.offset + query.limit < total;
 
+  const updateRowField = (rowId: string, columnName: string, value: unknown) => {
+    const index = rows.findIndex((row) => row._rowId === rowId);
+    if (index === -1) return;
+    const newRows = [...rows];
+    newRows[index] = { ...newRows[index], [columnName]: value };
+    setRows(newRows);
+    scheduleSave(newRows[index]);
+  };
+
+  const toggleRowSelection = (rowId: string) => {
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
+    });
+  };
+
+  const tablePickerOptions = useMemo(
+    () =>
+      tablesBySchema.flatMap(([schemaName, schemaTables]) =>
+        schemaTables.map((table) => ({
+          value: table.qualified_name,
+          label: `${schemaName}.${table.name} (${table.row_count})`,
+        })),
+      ),
+    [tablesBySchema],
+  );
+
+  const rowCardTitle = (row: GridRow) => {
+    if (!schema || schema.primary_keys.length === 0) {
+      return row._isNew ? "New row" : "Row";
+    }
+    return schema.primary_keys.map((key) => formatCell(row[key])).join(" · ");
+  };
+
+  const renderTableSidebar = (className?: string) => (
+    <PanelCard className={cn("p-3", className)}>
+      <h2 className="mb-2 text-sm font-semibold text-slate-700">Tables</h2>
+      <div className="space-y-3">
+        {tablesBySchema.map(([schemaName, schemaTables]) => (
+          <div key={schemaName}>
+            <h3 className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {schemaName}
+            </h3>
+            <ul className="space-y-1">
+              {schemaTables.map((table) => (
+                <li key={table.qualified_name}>
+                  <button
+                    type="button"
+                    onClick={() => setTableAndQuery(table.qualified_name, defaultQueryState())}
+                    className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
+                      selectedTable === table.qualified_name
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    <span className="font-medium">{table.name}</span>
+                    <span
+                      className={`ml-1 text-xs ${
+                        selectedTable === table.qualified_name ? "text-slate-300" : "text-slate-500"
+                      }`}
+                    >
+                      ({table.row_count})
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {tables.length === 0 ? <p className="text-sm text-slate-500">No tables yet</p> : null}
+      </div>
+    </PanelCard>
+  );
+
   return (
     <div className="space-y-4">
       <div>
@@ -635,46 +721,35 @@ export default function AgentDatabasePage() {
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <div className="flex min-h-[32rem] gap-4">
-        <aside className="w-64 shrink-0 rounded-lg border bg-white p-3">
-          <h2 className="mb-2 text-sm font-semibold text-slate-700">Tables</h2>
-          <div className="space-y-3">
-            {tablesBySchema.map(([schemaName, schemaTables]) => (
-              <div key={schemaName}>
-                <h3 className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {schemaName}
-                </h3>
-                <ul className="space-y-1">
-                  {schemaTables.map((table) => (
-                    <li key={table.qualified_name}>
-                      <button
-                        type="button"
-                        onClick={() => setTableAndQuery(table.qualified_name, defaultQueryState())}
-                        className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
-                          selectedTable === table.qualified_name
-                            ? "bg-slate-900 text-white"
-                            : "text-slate-700 hover:bg-slate-100"
-                        }`}
-                      >
-                        <span className="font-medium">{table.name}</span>
-                        <span
-                          className={`ml-1 text-xs ${
-                            selectedTable === table.qualified_name ? "text-slate-300" : "text-slate-500"
-                          }`}
-                        >
-                          ({table.row_count})
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-            {tables.length === 0 ? <p className="text-sm text-slate-500">No tables yet</p> : null}
-          </div>
-        </aside>
-
-        <section className="min-w-0 flex-1 space-y-3">
+      <SplitPanelLayout
+        sidebar={
+          <>
+            <div className="md:hidden">
+              <label htmlFor="table-picker" className="mb-1 block text-sm font-medium text-slate-700">
+                Table
+              </label>
+              <select
+                id="table-picker"
+                value={selectedTable ?? ""}
+                onChange={(event) => setTableAndQuery(event.target.value, defaultQueryState())}
+                className={selectClassName()}
+                disabled={tables.length === 0}
+              >
+                {tablePickerOptions.length === 0 ? (
+                  <option value="">No tables yet</option>
+                ) : (
+                  tablePickerOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            {renderTableSidebar("hidden md:block")}
+          </>
+        }
+      >
           <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border bg-white px-2 py-1.5">
             <ToolbarIconButton title="Add row" onClick={addRow} disabled={!schema || busy}>
               <PlusIcon />
@@ -825,7 +900,7 @@ export default function AgentDatabasePage() {
             </span>
           </div>
 
-          <div className="overflow-hidden rounded-lg border bg-white">
+          <div className="hidden overflow-hidden rounded-lg border bg-white md:block">
             {loading ? (
               <div className="p-8 text-sm text-slate-500">Loading…</div>
             ) : schema && selectedTable ? (
@@ -843,14 +918,65 @@ export default function AgentDatabasePage() {
             )}
           </div>
 
+          <MobileCardList>
+            {loading ? (
+              <p className="text-sm text-slate-500">Loading…</p>
+            ) : schema && selectedTable ? (
+              rows.map((row) => (
+                <DataCard key={row._rowId} className={selectedRows.has(row._rowId) ? "ring-2 ring-slate-400" : undefined}>
+                  <div className="mb-2 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 rounded border-slate-300"
+                      checked={selectedRows.has(row._rowId)}
+                      onChange={() => toggleRowSelection(row._rowId)}
+                      aria-label={`Select row ${rowCardTitle(row)}`}
+                    />
+                    <DataCardTitle>{rowCardTitle(row)}</DataCardTitle>
+                  </div>
+                  <dl>
+                    {schema.columns.map((col) => {
+                      const editable = !(col.primary_key && col.autoincrement);
+                      const value = row[col.name];
+                      const label = col.primary_key ? `${col.name} (PK)` : col.name;
+                      return (
+                        <DataCardField key={col.name} label={label}>
+                          {editable ? (
+                            col.type === "boolean" ? (
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 rounded border-slate-300"
+                                checked={Boolean(value)}
+                                onChange={(event) => updateRowField(row._rowId, col.name, event.target.checked)}
+                              />
+                            ) : (
+                              <Input
+                                value={formatCell(value)}
+                                className="h-8 px-2 text-sm"
+                                onChange={(event) => updateRowField(row._rowId, col.name, event.target.value)}
+                              />
+                            )
+                          ) : (
+                            formatCell(value)
+                          )}
+                        </DataCardField>
+                      );
+                    })}
+                  </dl>
+                </DataCard>
+              ))
+            ) : (
+              <p className="text-sm text-slate-500">Select a table</p>
+            )}
+          </MobileCardList>
+
           {schema ? (
             <p className="text-xs text-slate-500">
-              Primary keys: {schema.primary_keys.join(", ") || "(none)"}. Double-click a cell to edit; new rows insert
-              after you fill required fields. Click a column header to sort.
+              Primary keys: {schema.primary_keys.join(", ") || "(none)"}. Double-click a cell to edit on desktop; on
+              mobile, edit fields directly in each card. New rows insert after you fill required fields.
             </p>
           ) : null}
-        </section>
-      </div>
+      </SplitPanelLayout>
 
       <ConfirmModal
         open={deleteOpen}

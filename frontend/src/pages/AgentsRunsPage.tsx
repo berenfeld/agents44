@@ -11,6 +11,15 @@ import { formatCost, formatDate, formatDuration, formatTokens, runDurationSecond
 import { countMatches } from "@/lib/search-highlight";
 import { Modal } from "@/components/ui/modal";
 import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
+import {
+  DataCard,
+  DataCardActions,
+  DataCardField,
+  DataCardTitle,
+  DesktopTableShell,
+  MobileCardList,
+} from "@/components/ui/data-card";
+import { Button } from "@/components/ui/primitives";
 
 function filesUrl(path: string) {
   return `/agents_files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -223,7 +232,8 @@ export default function AgentsRunsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Agents Runs</h1>
-      <div className="overflow-x-auto rounded-lg border">
+
+      <DesktopTableShell>
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
@@ -320,7 +330,62 @@ export default function AgentsRunsPage() {
             ))}
           </tbody>
         </table>
-      </div>
+      </DesktopTableShell>
+
+      <MobileCardList>
+        {sorted.map((run) => (
+          <DataCard key={run.id}>
+            <DataCardTitle>
+              Run #{run.id} · {run.agent_name || run.agent_id}
+            </DataCardTitle>
+            <dl>
+              <DataCardField label="Status">
+                <RunStatusBadge status={run.status} />
+              </DataCardField>
+              <DataCardField label="Model">{run.model || "-"}</DataCardField>
+              <DataCardField label="Tokens">
+                <span className="tabular-nums">{formatTokens(run.tokens_in, run.tokens_out)}</span>
+              </DataCardField>
+              <DataCardField label="Est. cost">{formatCost(run.estimated_cost_usd)}</DataCardField>
+              <DataCardField label="Trigger">{run.trigger_source}</DataCardField>
+              <DataCardField label="Started">{formatDate(run.started_at)}</DataCardField>
+              <DataCardField label="Duration">{formatDuration(run.started_at, run.finished_at)}</DataCardField>
+              <DataCardField label="Run folder">
+                {run.run_dir ? (
+                  <Link to={filesUrl(run.run_dir)} className="break-all text-slate-700 hover:underline">
+                    {run.run_dir.split("/").pop()}
+                  </Link>
+                ) : (
+                  "-"
+                )}
+              </DataCardField>
+            </dl>
+            <DataCardActions>
+              <Button
+                variant="outline"
+                disabled={!run.prompt_path && !run.prompt_preview}
+                onClick={() => openPrompt(run)}
+              >
+                Prompt
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!run.log_path && !isActiveRun(run.status)}
+                onClick={() => openLog(run)}
+              >
+                Log
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!run.run_dir && !isActiveRun(run.status)}
+                onClick={() => openSummary(run)}
+              >
+                Summary
+              </Button>
+            </DataCardActions>
+          </DataCard>
+        ))}
+      </MobileCardList>
 
       <Modal
         open={modalOpen}

@@ -23,10 +23,10 @@ export function Modal({
         <Dialog.Overlay className="fixed inset-0 bg-black/40" />
         <Dialog.Content
           className={cn(
-            "fixed left-1/2 top-1/2 max-h-[92vh] w-full -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl",
+            "fixed left-1/2 top-1/2 max-h-[92vh] w-[calc(100%-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-xl",
             size === "large"
-              ? "flex max-w-5xl flex-col overflow-hidden"
-              : "max-w-lg overflow-y-auto",
+              ? "flex max-w-5xl flex-col overflow-hidden md:w-full"
+              : "max-w-lg overflow-y-auto md:w-full",
           )}
         >
           <div className="flex shrink-0 items-center gap-3">

@@ -32,7 +32,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
-      <div className="flex flex-1 items-start justify-center px-4 pt-24">
+      <div className="flex flex-1 items-center justify-center px-4 py-8">
         <div className="w-full max-w-md rounded-lg border bg-white p-6 shadow">
           <h1 className="text-2xl font-semibold">Agents44 Login</h1>
           <p className="mt-2 text-sm text-slate-600">Sign in to manage agents and workspace files.</p>
