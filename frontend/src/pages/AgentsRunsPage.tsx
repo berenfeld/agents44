@@ -19,7 +19,7 @@ import {
   DesktopTableShell,
   MobileCardList,
 } from "@/components/ui/data-card";
-import { Button, Label } from "@/components/ui/primitives";
+import { Button } from "@/components/ui/primitives";
 
 function filesUrl(path: string) {
   return `/agents_files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -280,50 +280,46 @@ export default function AgentsRunsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
         <h1 className="text-2xl font-semibold">Agents Runs</h1>
-        <div className="flex flex-wrap items-end gap-x-5 gap-y-2 text-sm">
-          <div className="flex min-w-[12rem] flex-col gap-1">
-            <Label htmlFor="runs-agent-filter">Agent</Label>
-            <select
-              id="runs-agent-filter"
-              className={cn(
-                "h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400",
-              )}
-              value={agentFilter}
-              onChange={(e) => {
-                setSearchParams(
-                  (current) => {
-                    const params = new URLSearchParams(current);
-                    if (e.target.value) {
-                      params.set("agent_id", e.target.value);
-                    } else {
-                      params.delete("agent_id");
-                    }
-                    return params;
-                  },
-                  { replace: true },
-                );
-              }}
-            >
-              <option value="">All agents</option>
-              {agentOptions.map(([id, name]) => (
-                <option key={id} value={String(id)}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 pb-0.5 text-slate-600">
-            <p>
-              <span className="font-medium text-slate-700">Total tokens:</span>{" "}
-              <span className="tabular-nums">{formatTokens(runTotals.tokensIn, runTotals.tokensOut)}</span>
-            </p>
-            <p>
-              <span className="font-medium text-slate-700">Total cost:</span>{" "}
-              <span className="tabular-nums">{formatCost(runTotals.cost)}</span>
-            </p>
-          </div>
+        <select
+          id="runs-agent-filter"
+          aria-label="Filter by agent"
+          className={cn(
+            "h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 md:w-auto md:min-w-[12rem]",
+          )}
+          value={agentFilter}
+          onChange={(e) => {
+            setSearchParams(
+              (current) => {
+                const params = new URLSearchParams(current);
+                if (e.target.value) {
+                  params.set("agent_id", e.target.value);
+                } else {
+                  params.delete("agent_id");
+                }
+                return params;
+              },
+              { replace: true },
+            );
+          }}
+        >
+          <option value="">All agents</option>
+          {agentOptions.map(([id, name]) => (
+            <option key={id} value={String(id)}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-600">
+          <p>
+            <span className="font-medium text-slate-700">Total tokens:</span>{" "}
+            <span className="tabular-nums">{formatTokens(runTotals.tokensIn, runTotals.tokensOut)}</span>
+          </p>
+          <p>
+            <span className="font-medium text-slate-700">Total cost:</span>{" "}
+            <span className="tabular-nums">{formatCost(runTotals.cost)}</span>
+          </p>
         </div>
       </div>
 
