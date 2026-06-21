@@ -76,7 +76,26 @@ SEED_PARAMS = [
             '(e.g. ["--permission-mode", "bypassPermissions"]). Default allows web search and fetch.'
         ),
     },
+    {
+        "key": "TIMEOUT_SIGTERM_GRACE_SECONDS",
+        "value": "300",
+        "description": (
+            "Seconds after an agent's configured timeout before SIGTERM is sent "
+            "(default 300 = 5 minutes)."
+        ),
+    },
+    {
+        "key": "TIMEOUT_SIGKILL_GRACE_SECONDS",
+        "value": "600",
+        "description": (
+            "Seconds after an agent's configured timeout before SIGKILL is sent "
+            "(default 600 = 10 minutes). Must be >= TIMEOUT_SIGTERM_GRACE_SECONDS."
+        ),
+    },
 ]
+
+DEFAULT_TIMEOUT_SIGTERM_GRACE_SECONDS = 300
+DEFAULT_TIMEOUT_SIGKILL_GRACE_SECONDS = 600
 
 
 def get_param(key: str, default=None):
@@ -84,6 +103,37 @@ def get_param(key: str, default=None):
     if not row:
         return default
     return row.value
+
+
+def get_param_int(key: str, default: int) -> int:
+    raw = get_param(key)
+    if raw is None:
+        return default
+    try:
+        value = int(str(raw).strip())
+        if value < 0:
+            raise ValueError("negative")
+        return value
+    except ValueError:
+        logger.warning("Invalid integer for system param %s: %r", key, raw)
+        return default
+
+
+def get_timeout_sigterm_grace_seconds() -> int:
+    return get_param_int("TIMEOUT_SIGTERM_GRACE_SECONDS", DEFAULT_TIMEOUT_SIGTERM_GRACE_SECONDS)
+
+
+def get_timeout_sigkill_grace_seconds() -> int:
+    sigterm_grace = get_timeout_sigterm_grace_seconds()
+    sigkill_grace = get_param_int("TIMEOUT_SIGKILL_GRACE_SECONDS", DEFAULT_TIMEOUT_SIGKILL_GRACE_SECONDS)
+    if sigkill_grace < sigterm_grace:
+        logger.warning(
+            "TIMEOUT_SIGKILL_GRACE_SECONDS (%s) < TIMEOUT_SIGTERM_GRACE_SECONDS (%s); using SIGTERM value",
+            sigkill_grace,
+            sigterm_grace,
+        )
+        return sigterm_grace
+    return sigkill_grace
 
 
 def get_param_json(key: str, default=None):

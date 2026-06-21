@@ -19,7 +19,11 @@ from app.extensions import db
 from app.models import RunStatus, SystemAgent, SystemAgentRun, TriggerSource
 from app.services.email import maybe_notify_run
 from app.services.model_registry import compute_estimated_cost, parse_usage_from_claude_output
-from app.services.params import get_claude_cli_extra_args
+from app.services.params import (
+    get_claude_cli_extra_args,
+    get_timeout_sigkill_grace_seconds,
+    get_timeout_sigterm_grace_seconds,
+)
 from app.services.db_provisioning import build_agent_db_instructions
 from app.services.workspace import ensure_agent_folder, ensure_run_folder, read_prompt_inputs, safe_path, workspace_root
 
@@ -31,8 +35,6 @@ _worker_started = False
 
 RUN_FAILED_MESSAGE = "Agent run failed"
 LOG_STDERR_MAX = 4000
-TIMEOUT_SIGTERM_GRACE_SECONDS = 60
-TIMEOUT_SIGKILL_GRACE_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -45,16 +47,19 @@ class ClaudeSubprocessResult:
     sigkill_sent: bool
 
 
-def _enforcement_note(timeout_seconds: int, *, sigterm_sent: bool, sigkill_sent: bool) -> str:
+def _enforcement_note(
+    timeout_seconds: int,
+    *,
+    sigterm_grace_seconds: int,
+    sigkill_grace_seconds: int,
+    sigterm_sent: bool,
+    sigkill_sent: bool,
+) -> str:
     parts = [f"Agent run exceeded configured timeout ({timeout_seconds}s)"]
     if sigterm_sent:
-        parts.append(
-            f"SIGTERM at {timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS}s"
-        )
+        parts.append(f"SIGTERM at {timeout_seconds + sigterm_grace_seconds}s")
     if sigkill_sent:
-        parts.append(
-            f"SIGKILL at {timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS}s"
-        )
+        parts.append(f"SIGKILL at {timeout_seconds + sigkill_grace_seconds}s")
     return "; ".join(parts)
 
 
@@ -91,6 +96,8 @@ def _run_start_context(
     *,
     cmd: list[str],
     timeout_seconds: int,
+    sigterm_grace_seconds: int,
+    sigkill_grace_seconds: int,
     mcp_config_path: Path,
     cwd: str,
     payload: dict | None,
@@ -103,8 +110,10 @@ def _run_start_context(
         "model": agent.model,
         "trigger_source": run.trigger_source.value,
         "timeout_seconds": timeout_seconds,
-        "timeout_sigterm_at_seconds": timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS,
-        "timeout_sigkill_at_seconds": timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS,
+        "timeout_sigterm_grace_seconds": sigterm_grace_seconds,
+        "timeout_sigkill_grace_seconds": sigkill_grace_seconds,
+        "timeout_sigterm_at_seconds": timeout_seconds + sigterm_grace_seconds,
+        "timeout_sigkill_at_seconds": timeout_seconds + sigkill_grace_seconds,
         "cwd": cwd,
         "run_dir": run.run_dir,
         "prompt_path": run.prompt_path,
@@ -232,6 +241,8 @@ def _run_claude_subprocess(
     cwd: str,
     env: dict[str, str],
     timeout_seconds: int,
+    sigterm_grace_seconds: int,
+    sigkill_grace_seconds: int,
 ) -> ClaudeSubprocessResult:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
@@ -272,8 +283,8 @@ def _run_claude_subprocess(
         started = time.monotonic()
         sigterm_sent = False
         sigkill_sent = False
-        sigterm_at = timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS
-        sigkill_at = timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS
+        sigterm_at = timeout_seconds + sigterm_grace_seconds
+        sigkill_at = timeout_seconds + sigkill_grace_seconds
 
         while proc.poll() is None:
             elapsed = time.monotonic() - started
@@ -281,7 +292,7 @@ def _run_claude_subprocess(
                 log_file.write(
                     f"\n=== TIMEOUT ENFORCEMENT ===\n"
                     f"SIGKILL sent at {elapsed:.1f}s "
-                    f"(configured timeout {timeout_seconds}s + {TIMEOUT_SIGKILL_GRACE_SECONDS}s)\n"
+                    f"(configured timeout {timeout_seconds}s + {sigkill_grace_seconds}s)\n"
                 )
                 log_file.flush()
                 _signal_process_group(proc, signal.SIGKILL)
@@ -291,7 +302,7 @@ def _run_claude_subprocess(
                 log_file.write(
                     f"\n=== TIMEOUT ENFORCEMENT ===\n"
                     f"SIGTERM sent at {elapsed:.1f}s "
-                    f"(configured timeout {timeout_seconds}s + {TIMEOUT_SIGTERM_GRACE_SECONDS}s)\n"
+                    f"(configured timeout {timeout_seconds}s + {sigterm_grace_seconds}s)\n"
                 )
                 log_file.flush()
                 _signal_process_group(proc, signal.SIGTERM)
@@ -498,12 +509,16 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         ]
 
         timeout_seconds = agent.timeout_seconds or 300
+        sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
+        sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
         cwd = str(workspace_root())
         start_context = _run_start_context(
             run,
             agent,
             cmd=cmd,
             timeout_seconds=timeout_seconds,
+            sigterm_grace_seconds=sigterm_grace_seconds,
+            sigkill_grace_seconds=sigkill_grace_seconds,
             mcp_config_path=mcp_config_path,
             cwd=cwd,
             payload=payload,
@@ -516,6 +531,8 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
             cwd=cwd,
             env=env,
             timeout_seconds=timeout_seconds,
+            sigterm_grace_seconds=sigterm_grace_seconds,
+            sigkill_grace_seconds=sigkill_grace_seconds,
         )
         stdout = result.stdout
         stderr = result.stderr
@@ -535,20 +552,22 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
             error_message = RUN_FAILED_MESSAGE
             exit_note = _enforcement_note(
                 timeout_seconds,
+                sigterm_grace_seconds=sigterm_grace_seconds,
+                sigkill_grace_seconds=sigkill_grace_seconds,
                 sigterm_sent=result.sigterm_sent,
                 sigkill_sent=True,
             )
         elif result.sigterm_sent:
             if _summary_written(summary_path):
                 exit_note = (
-                    f"{_enforcement_note(timeout_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                    f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
                     "summary.md written after SIGTERM"
                 )
             else:
                 status = RunStatus.failed
                 error_message = RUN_FAILED_MESSAGE
                 exit_note = (
-                    f"{_enforcement_note(timeout_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                    f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
                     "summary.md missing"
                 )
         elif returncode != 0:

@@ -129,3 +129,5 @@ Departments are managed in the **Departments** tab (not hardcoded). Creating a d
 - `NOTIFY_ON` — `all` | `failures` | `none`
 - `MODEL_PRICING` — per-model USD per 1M tokens for cost estimates
 - `CLAUDE_CLI_ARGS` — JSON array of extra Claude CLI flags appended to every agent run (default enables web search/fetch)
+- `TIMEOUT_SIGTERM_GRACE_SECONDS` — seconds after an agent's configured timeout before SIGTERM (default 300)
+- `TIMEOUT_SIGKILL_GRACE_SECONDS` — seconds after an agent's configured timeout before SIGKILL (default 600)

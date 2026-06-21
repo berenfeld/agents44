@@ -30,7 +30,8 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-semibold">Settings</h1>
       <p className="text-sm text-slate-600">
         System parameters stored in the database. <code>CLAUDE_CLI_ARGS</code> is a JSON array of extra flags passed to
-        the Claude CLI on every agent run.
+        the Claude CLI on every agent run. Timeout grace values control when SIGTERM and SIGKILL are sent after an
+        agent&apos;s configured run timeout.
       </p>
 
       {loading ? (

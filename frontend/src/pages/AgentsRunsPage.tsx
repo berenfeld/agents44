@@ -109,6 +109,7 @@ export default function AgentsRunsPage() {
   const [modalKind, setModalKind] = useState<"log" | "prompt" | "summary" | null>(null);
   const [modalRunId, setModalRunId] = useState<number | null>(null);
   const [modalSearch, setModalSearch] = useState("");
+  const [logAutoScroll, setLogAutoScroll] = useState(true);
 
   const sortAccessors = useMemo(
     () => ({
@@ -175,6 +176,7 @@ export default function AgentsRunsPage() {
     isActiveRun(modalRun.status) &&
     (modalKind === "log" ||
       (modalKind === "summary" && (!modalContent.trim() || modalContent === "(empty)")));
+  const modalLogLive = modalLive && modalKind === "log";
 
   const modalSearchPlaceholder =
     modalKind === "log"
@@ -248,6 +250,7 @@ export default function AgentsRunsPage() {
     setModalKind(kind);
     setModalRunId(runId);
     setModalSearch("");
+    setLogAutoScroll(true);
     setModalContent("Loading...");
     setModalOpen(true);
     try {
@@ -491,12 +494,14 @@ export default function AgentsRunsPage() {
               matchCount={modalMatchCount}
               live={modalLive}
               liveLabel={modalKind === "summary" ? "Waiting" : "Live"}
+              autoScroll={modalLogLive ? logAutoScroll : undefined}
+              onAutoScrollChange={modalLogLive ? setLogAutoScroll : undefined}
             />
           ) : null
         }
       >
         {modalKind === "log" || modalKind === "prompt" ? (
-          <RunLogViewer content={modalContent} search={modalSearch} />
+          <RunLogViewer content={modalContent} search={modalSearch} autoScroll={modalLogLive && logAutoScroll} />
         ) : modalKind === "summary" ? (
           <RunSummaryViewer content={modalContent} search={modalSearch} />
         ) : null}
