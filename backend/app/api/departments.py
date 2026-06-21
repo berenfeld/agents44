@@ -5,6 +5,11 @@ from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.extensions import db
 from app.models import SystemAgent, SystemDepartment
+from app.services.db_provisioning import (
+    create_department_schema,
+    drop_department_schema,
+    refresh_all_cross_grants,
+)
 from app.services.workspace import ensure_department_folder, validate_department_name
 
 departments_bp = Blueprint("departments", __name__)
@@ -34,6 +39,9 @@ def create_department():
     row = SystemDepartment(name=name)
     db.session.add(row)
     db.session.commit()
+    conn = db.session.connection()
+    create_department_schema(conn, name)
+    refresh_all_cross_grants(conn)
     ensure_department_folder(name)
     return jsonify(row.to_dict()), 201
 
@@ -47,6 +55,9 @@ def delete_department(department_id: int):
         raise APIClientError("Not found", 404)
     if SystemAgent.query.filter_by(department=row.name).first():
         raise APIClientError("Department is in use by one or more agents", 400)
+    conn = db.session.connection()
+    drop_department_schema(conn, row.name)
     db.session.delete(row)
     db.session.commit()
+    refresh_all_cross_grants(conn)
     return jsonify({"deleted": department_id})

@@ -8,6 +8,11 @@ from app.models import SystemAgent, SystemDepartment
 from app.services.model_registry import validate_model
 from app.services.scheduler import sync_scheduler_jobs
 from app.services.timeout import parse_timeout_input
+from app.services.db_provisioning import (
+    create_agent_role,
+    drop_agent_db_access,
+    refresh_all_cross_grants,
+)
 from app.services.workspace import ensure_agent_folder
 
 agents_bp = Blueprint("agents", __name__)
@@ -67,16 +72,23 @@ def create_agent():
     if SystemAgent.query.filter_by(name=data["name"]).first():
         raise APIClientError("Agent name already exists", 400)
 
+    department = _require_department(data["department"])
+    conn = db.session.connection()
+    creds = create_agent_role(conn, agent_name=data["name"], department=department)
+
     agent = SystemAgent(
         name=data["name"],
-        department=_require_department(data["department"]),
+        department=department,
         model=data["model"],
         crond=data.get("crond"),
         enabled=data.get("enabled", True),
         timeout_seconds=data.get("timeout_seconds", 300),
+        db_user=creds["db_user"],
+        db_password=creds["db_password"],
     )
     db.session.add(agent)
     db.session.commit()
+    refresh_all_cross_grants(conn)
     ensure_agent_folder(agent.name)
     sync_scheduler_jobs()
     return jsonify(agent.to_dict()), 201
@@ -120,8 +132,11 @@ def delete_agent(agent_id: int):
     agent = db.session.get(SystemAgent, agent_id)
     if not agent:
         raise APIClientError("Not found", 404)
+    conn = db.session.connection()
+    drop_agent_db_access(conn, agent_name=agent.name, db_user=agent.db_user)
     db.session.delete(agent)
     db.session.commit()
+    refresh_all_cross_grants(conn)
     sync_scheduler_jobs()
     return jsonify({"deleted": agent_id})
 
