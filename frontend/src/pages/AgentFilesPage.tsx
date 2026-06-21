@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { EditorView } from "@codemirror/view";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -20,6 +21,11 @@ type PathResponse = {
 };
 
 const FILES_ROUTE_PREFIX = "/agents_files";
+
+const editorAutoHeight = EditorView.theme({
+  "&": { height: "auto !important" },
+  ".cm-scroller": { overflow: "visible !important", height: "auto !important" },
+});
 
 function parseFilesUrl(pathname: string): string {
   if (!pathname.startsWith(FILES_ROUTE_PREFIX)) return "";
@@ -252,9 +258,9 @@ export default function AgentFilesPage() {
 
   const editorExtensions = useMemo(() => {
     const ext = extension(selectedPath);
-    if (ext === "json") return [json()];
-    if (ext === "md" || ext === "markdown") return [markdown()];
-    return [];
+    const lang =
+      ext === "json" ? [json()] : ext === "md" || ext === "markdown" ? [markdown()] : [];
+    return [editorAutoHeight, ...lang];
   }, [selectedPath]);
 
   const reloadFolder = async () => {
@@ -293,14 +299,14 @@ export default function AgentFilesPage() {
     if (viewMode) {
       if (ext === "md" || ext === "markdown") {
         return (
-          <div className="max-h-[calc(100vh-14rem)] overflow-auto rounded border bg-slate-50 p-4 text-sm leading-relaxed text-slate-800 [&_code]:rounded [&_code]:bg-slate-200 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5">
+          <div className="rounded border bg-slate-50 p-4 text-sm leading-relaxed text-slate-800 [&_code]:rounded [&_code]:bg-slate-200 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5">
             <ReactMarkdown>{content}</ReactMarkdown>
           </div>
         );
       }
 
       return (
-        <pre className="max-h-[calc(100vh-14rem)] overflow-auto whitespace-pre-wrap break-words rounded border bg-slate-950 p-4 font-mono text-sm text-slate-100">
+        <pre className="whitespace-pre-wrap break-words rounded border bg-slate-950 p-4 font-mono text-sm text-slate-100">
           {content}
         </pre>
       );
@@ -313,8 +319,8 @@ export default function AgentFilesPage() {
     return (
       <CodeMirror
         value={content}
-        height="calc(100vh - 14rem)"
         theme={vscodeDark}
+        basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLineGutter: false }}
         extensions={editorExtensions}
         onChange={(value) => {
           setContent(value);
