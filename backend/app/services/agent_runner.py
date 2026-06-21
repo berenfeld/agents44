@@ -4,6 +4,7 @@ import os
 import queue
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -29,6 +30,45 @@ _worker_started = False
 
 RUN_FAILED_MESSAGE = "Agent run failed"
 LOG_STDERR_MAX = 4000
+TIMEOUT_SIGTERM_GRACE_SECONDS = 60
+TIMEOUT_SIGKILL_GRACE_SECONDS = 120
+
+
+class AgentRunTimedOut(Exception):
+    def __init__(
+        self,
+        *,
+        timeout_seconds: int,
+        duration_seconds: float,
+        sigterm_sent: bool,
+        sigkill_sent: bool,
+    ) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.duration_seconds = duration_seconds
+        self.sigterm_sent = sigterm_sent
+        self.sigkill_sent = sigkill_sent
+        super().__init__(self.timeout_message())
+
+    def timeout_message(self) -> str:
+        parts = [f"Agent run exceeded configured timeout ({self.timeout_seconds}s)"]
+        if self.sigterm_sent:
+            parts.append(
+                f"SIGTERM at {self.timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS}s"
+            )
+        if self.sigkill_sent:
+            parts.append(
+                f"SIGKILL at {self.timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS}s"
+            )
+        return "; ".join(parts)
+
+
+def _signal_process_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        pass
 
 
 def _truncate_text(text: str, max_chars: int = LOG_STDERR_MAX) -> str:
@@ -63,6 +103,8 @@ def _run_start_context(
         "model": agent.model,
         "trigger_source": run.trigger_source.value,
         "timeout_seconds": timeout_seconds,
+        "timeout_sigterm_at_seconds": timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS,
+        "timeout_sigkill_at_seconds": timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS,
         "cwd": cwd,
         "run_dir": run.run_dir,
         "prompt_path": run.prompt_path,
@@ -205,6 +247,7 @@ def _run_claude_subprocess(
             stderr=subprocess.PIPE,
             text=True,
             env=env,
+            start_new_session=True,
         )
 
         def read_stdout() -> None:
@@ -226,17 +269,47 @@ def _run_claude_subprocess(
         stdout_thread.start()
         stderr_thread.start()
 
-        try:
-            returncode = proc.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            stdout_thread.join(timeout=2)
-            stderr_thread.join(timeout=2)
-            raise
+        started = time.monotonic()
+        sigterm_sent = False
+        sigkill_sent = False
+        sigterm_at = timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS
+        sigkill_at = timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS
 
+        while proc.poll() is None:
+            elapsed = time.monotonic() - started
+            if elapsed >= sigkill_at:
+                log_file.write(
+                    f"\n=== TIMEOUT ENFORCEMENT ===\n"
+                    f"SIGKILL sent at {elapsed:.1f}s "
+                    f"(configured timeout {timeout_seconds}s + {TIMEOUT_SIGKILL_GRACE_SECONDS}s)\n"
+                )
+                log_file.flush()
+                _signal_process_group(proc, signal.SIGKILL)
+                sigkill_sent = True
+                break
+            if elapsed >= sigterm_at and not sigterm_sent:
+                log_file.write(
+                    f"\n=== TIMEOUT ENFORCEMENT ===\n"
+                    f"SIGTERM sent at {elapsed:.1f}s "
+                    f"(configured timeout {timeout_seconds}s + {TIMEOUT_SIGTERM_GRACE_SECONDS}s)\n"
+                )
+                log_file.flush()
+                _signal_process_group(proc, signal.SIGTERM)
+                sigterm_sent = True
+            time.sleep(0.5)
+
+        returncode = proc.wait()
         stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
+
+        duration_seconds = time.monotonic() - started
+        if sigterm_sent or sigkill_sent:
+            raise AgentRunTimedOut(
+                timeout_seconds=timeout_seconds,
+                duration_seconds=duration_seconds,
+                sigterm_sent=sigterm_sent,
+                sigkill_sent=sigkill_sent,
+            )
 
     return returncode, "".join(stdout_parts), "".join(stderr_parts)
 
@@ -445,16 +518,20 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                 env=env,
                 timeout_seconds=timeout_seconds,
             )
-        except subprocess.TimeoutExpired:
-            duration_seconds = time.monotonic() - started_monotonic
-            timeout_note = f"Agent run timed out after {timeout_seconds} seconds"
+        except AgentRunTimedOut as exc:
+            duration_seconds = exc.duration_seconds
+            timeout_note = exc.timeout_message()
             partial_stdout = ""
             partial_stderr = ""
             if log_path.exists():
                 log_text = log_path.read_text(encoding="utf-8")
                 if "\n=== STDOUT ===\n" in log_text:
                     partial_stdout = log_text.split("\n=== STDOUT ===\n", 1)[1]
-                    for marker in ("\n=== STDERR ===\n", "\n=== RUN END ===\n"):
+                    for marker in (
+                        "\n=== TIMEOUT ENFORCEMENT ===\n",
+                        "\n=== STDERR ===\n",
+                        "\n=== RUN END ===\n",
+                    ):
                         if marker in partial_stdout:
                             partial_stdout = partial_stdout.split(marker, 1)[0]
             _write_run_log_finish(
@@ -477,6 +554,8 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                     "exit_code": -1,
                     "duration_seconds": round(duration_seconds, 3),
                     "timeout_seconds": timeout_seconds,
+                    "timeout_sigterm_at_seconds": timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS,
+                    "timeout_sigkill_at_seconds": timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS,
                     "error_message": RUN_FAILED_MESSAGE,
                     "detail": timeout_note,
                     "stderr": _truncate_text(partial_stderr) if partial_stderr else None,
