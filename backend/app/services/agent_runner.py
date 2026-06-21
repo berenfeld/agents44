@@ -8,6 +8,7 @@ import signal
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,32 +35,31 @@ TIMEOUT_SIGTERM_GRACE_SECONDS = 60
 TIMEOUT_SIGKILL_GRACE_SECONDS = 120
 
 
-class AgentRunTimedOut(Exception):
-    def __init__(
-        self,
-        *,
-        timeout_seconds: int,
-        duration_seconds: float,
-        sigterm_sent: bool,
-        sigkill_sent: bool,
-    ) -> None:
-        self.timeout_seconds = timeout_seconds
-        self.duration_seconds = duration_seconds
-        self.sigterm_sent = sigterm_sent
-        self.sigkill_sent = sigkill_sent
-        super().__init__(self.timeout_message())
+@dataclass(frozen=True)
+class ClaudeSubprocessResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    duration_seconds: float
+    sigterm_sent: bool
+    sigkill_sent: bool
 
-    def timeout_message(self) -> str:
-        parts = [f"Agent run exceeded configured timeout ({self.timeout_seconds}s)"]
-        if self.sigterm_sent:
-            parts.append(
-                f"SIGTERM at {self.timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS}s"
-            )
-        if self.sigkill_sent:
-            parts.append(
-                f"SIGKILL at {self.timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS}s"
-            )
-        return "; ".join(parts)
+
+def _enforcement_note(timeout_seconds: int, *, sigterm_sent: bool, sigkill_sent: bool) -> str:
+    parts = [f"Agent run exceeded configured timeout ({timeout_seconds}s)"]
+    if sigterm_sent:
+        parts.append(
+            f"SIGTERM at {timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS}s"
+        )
+    if sigkill_sent:
+        parts.append(
+            f"SIGKILL at {timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS}s"
+        )
+    return "; ".join(parts)
+
+
+def _summary_written(summary_path: Path) -> bool:
+    return summary_path.exists() and bool(summary_path.read_text(encoding="utf-8").strip())
 
 
 def _signal_process_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
@@ -232,7 +232,7 @@ def _run_claude_subprocess(
     cwd: str,
     env: dict[str, str],
     timeout_seconds: int,
-) -> tuple[int, str, str]:
+) -> ClaudeSubprocessResult:
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
 
@@ -303,15 +303,15 @@ def _run_claude_subprocess(
         stderr_thread.join(timeout=5)
 
         duration_seconds = time.monotonic() - started
-        if sigterm_sent or sigkill_sent:
-            raise AgentRunTimedOut(
-                timeout_seconds=timeout_seconds,
-                duration_seconds=duration_seconds,
-                sigterm_sent=sigterm_sent,
-                sigkill_sent=sigkill_sent,
-            )
 
-    return returncode, "".join(stdout_parts), "".join(stderr_parts)
+    return ClaudeSubprocessResult(
+        returncode=returncode,
+        stdout="".join(stdout_parts),
+        stderr="".join(stderr_parts),
+        duration_seconds=duration_seconds,
+        sigterm_sent=sigterm_sent,
+        sigkill_sent=sigkill_sent,
+    )
 
 
 def build_run_summary_instructions(summary_path: str) -> str:
@@ -321,6 +321,8 @@ def build_run_summary_instructions(summary_path: str) -> str:
             "",
             "Before you finish this run, you MUST write a markdown summary to this exact path:",
             f"`{summary_path}`",
+            "",
+            "If the run is interrupted by a shutdown signal, write the summary immediately before exiting.",
             "",
             "Use the `write_workspace` tool with that path and filename `summary.md`.",
             "The summary should be concise and include:",
@@ -508,74 +510,50 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         )
         _write_run_log_start(log_path, start_context)
         _log_run_start(start_context)
-        started_monotonic = time.monotonic()
-
-        try:
-            returncode, stdout, stderr = _run_claude_subprocess(
-                log_path,
-                cmd,
-                cwd=cwd,
-                env=env,
-                timeout_seconds=timeout_seconds,
-            )
-        except AgentRunTimedOut as exc:
-            duration_seconds = exc.duration_seconds
-            timeout_note = exc.timeout_message()
-            partial_stdout = ""
-            partial_stderr = ""
-            if log_path.exists():
-                log_text = log_path.read_text(encoding="utf-8")
-                if "\n=== STDOUT ===\n" in log_text:
-                    partial_stdout = log_text.split("\n=== STDOUT ===\n", 1)[1]
-                    for marker in (
-                        "\n=== TIMEOUT ENFORCEMENT ===\n",
-                        "\n=== STDERR ===\n",
-                        "\n=== RUN END ===\n",
-                    ):
-                        if marker in partial_stdout:
-                            partial_stdout = partial_stdout.split(marker, 1)[0]
-            _write_run_log_finish(
-                log_path,
-                returncode=-1,
-                stdout=partial_stdout,
-                stderr=partial_stderr,
-                duration_seconds=duration_seconds,
-                status=RunStatus.failed,
-                error_message=RUN_FAILED_MESSAGE,
-                extra_notes=timeout_note,
-                stdout_written=True,
-            )
-            _log_run_finish(
-                {
-                    "run_id": run.id,
-                    "agent_id": agent.id,
-                    "agent_name": agent.name,
-                    "status": RunStatus.failed.value,
-                    "exit_code": -1,
-                    "duration_seconds": round(duration_seconds, 3),
-                    "timeout_seconds": timeout_seconds,
-                    "timeout_sigterm_at_seconds": timeout_seconds + TIMEOUT_SIGTERM_GRACE_SECONDS,
-                    "timeout_sigkill_at_seconds": timeout_seconds + TIMEOUT_SIGKILL_GRACE_SECONDS,
-                    "error_message": RUN_FAILED_MESSAGE,
-                    "detail": timeout_note,
-                    "stderr": _truncate_text(partial_stderr) if partial_stderr else None,
-                }
-            )
-            _finalize_run(run, agent, RunStatus.failed, RUN_FAILED_MESSAGE, None, None, None)
-            return
-
-        duration_seconds = time.monotonic() - started_monotonic
-
-        status = RunStatus.success
-        error_message = None
-        if returncode != 0:
-            status = RunStatus.failed
-            error_message = RUN_FAILED_MESSAGE
+        result = _run_claude_subprocess(
+            log_path,
+            cmd,
+            cwd=cwd,
+            env=env,
+            timeout_seconds=timeout_seconds,
+        )
+        stdout = result.stdout
+        stderr = result.stderr
+        returncode = result.returncode
+        duration_seconds = result.duration_seconds
+        summary_path = safe_path(paths["summary_path"])
 
         tokens_in, tokens_out = parse_usage_from_claude_output(stdout)
         estimated_cost = compute_estimated_cost(agent.model, tokens_in, tokens_out)
+
+        status = RunStatus.success
+        error_message = None
         exit_note = None
-        if returncode != 0:
+
+        if result.sigkill_sent:
+            status = RunStatus.failed
+            error_message = RUN_FAILED_MESSAGE
+            exit_note = _enforcement_note(
+                timeout_seconds,
+                sigterm_sent=result.sigterm_sent,
+                sigkill_sent=True,
+            )
+        elif result.sigterm_sent:
+            if _summary_written(summary_path):
+                exit_note = (
+                    f"{_enforcement_note(timeout_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                    "summary.md written after SIGTERM"
+                )
+            else:
+                status = RunStatus.failed
+                error_message = RUN_FAILED_MESSAGE
+                exit_note = (
+                    f"{_enforcement_note(timeout_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                    "summary.md missing"
+                )
+        elif returncode != 0:
+            status = RunStatus.failed
+            error_message = RUN_FAILED_MESSAGE
             exit_note = f"Claude CLI exited with code {returncode}"
 
         _write_run_log_finish(
@@ -604,6 +582,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                 "tokens_out": tokens_out,
                 "estimated_cost_usd": estimated_cost,
                 "error_message": error_message,
+                "detail": exit_note,
                 "stderr": _truncate_text(stderr) if stderr else None,
             }
         )
