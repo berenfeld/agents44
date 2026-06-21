@@ -166,6 +166,7 @@ export default function AgentFilesPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   const breadcrumbSegments = useMemo(
     () => (currentFolder ? currentFolder.split("/").filter(Boolean) : []),
@@ -191,6 +192,7 @@ export default function AgentFilesPage() {
         setSelectedPath("");
         setContent("");
         setDirty(false);
+        setSaveStatus("idle");
         setViewMode(true);
         setEntriesWithDrafts(await fetchFolder(""));
         return;
@@ -202,6 +204,7 @@ export default function AgentFilesPage() {
         setSelectedPath("");
         setContent("");
         setDirty(false);
+        setSaveStatus("idle");
         setViewMode(true);
         setEntriesWithDrafts(res.data.children || []);
         return;
@@ -212,6 +215,7 @@ export default function AgentFilesPage() {
       setSelectedPath(urlPath);
       setContent(res.data.content || "");
       setDirty(false);
+      setSaveStatus("idle");
       setViewMode(!urlEditMode);
       setEntriesWithDrafts(await fetchFolder(folder));
     } catch {
@@ -261,6 +265,36 @@ export default function AgentFilesPage() {
   const reloadFolder = async () => {
     setEntriesWithDrafts(await fetchFolder(currentFolder));
   };
+
+  const saveFile = useCallback(async () => {
+    if (!selectedPath || !dirty || !isEditable(selectedPath) || saveStatus === "saving") return;
+    setSaveStatus("saving");
+    try {
+      await api.put("/files", { path: selectedPath, content });
+      setDirty(false);
+      await reloadFolder();
+      setSaveStatus("saved");
+    } catch (err) {
+      setSaveStatus("idle");
+      throw err;
+    }
+  }, [selectedPath, dirty, content, saveStatus]);
+
+  useEffect(() => {
+    if (viewMode || !selectedPath || !isEditable(selectedPath)) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        if (dirty && saveStatus !== "saving") {
+          saveFile().catch(console.error);
+        }
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [viewMode, selectedPath, dirty, saveStatus, saveFile]);
 
   const commitEntryRename = async (entry: FileEntry) => {
     const trimmed = (draftNames[entry.path] ?? entry.name).trim();
@@ -321,6 +355,7 @@ export default function AgentFilesPage() {
           onChange={(value) => {
             setContent(value);
             setDirty(true);
+            setSaveStatus("idle");
           }}
         />
       </div>
@@ -512,14 +547,15 @@ export default function AgentFilesPage() {
                   )}
                   {!viewMode ? (
                     <Button
-                      disabled={!dirty || !isEditable(selectedPath)}
-                      onClick={async () => {
-                        await api.put("/files", { path: selectedPath, content });
-                        setDirty(false);
-                        await reloadFolder();
-                      }}
+                      disabled={
+                        saveStatus === "saving" ||
+                        saveStatus === "saved" ||
+                        !dirty ||
+                        !isEditable(selectedPath)
+                      }
+                      onClick={() => saveFile().catch(console.error)}
                     >
-                      Save
+                      {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
                     </Button>
                   ) : null}
                 </div>
