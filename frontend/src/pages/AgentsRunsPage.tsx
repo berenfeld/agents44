@@ -41,18 +41,23 @@ const RUNS_SORT_KEYS = new Set([
   "duration",
   "prompt_preview",
 ]);
-const DEFAULT_RUNS_SORT_KEY = "id";
+const DEFAULT_RUNS_SORT_KEY = "started_at";
+const DEFAULT_RUNS_SORT_DIR: SortDirection = "desc";
 
 function parseRunsSortParams(searchParams: URLSearchParams): { sortKey: string; sortDir: SortDirection } {
   const sortBy = searchParams.get("sort_by");
+  const sortDirParam = searchParams.get("sort_dir");
+  if (!sortBy && !sortDirParam) {
+    return { sortKey: DEFAULT_RUNS_SORT_KEY, sortDir: DEFAULT_RUNS_SORT_DIR };
+  }
   const sortKey = sortBy && RUNS_SORT_KEYS.has(sortBy) ? sortBy : DEFAULT_RUNS_SORT_KEY;
-  const sortDir = searchParams.get("sort_dir") === "desc" ? "desc" : "asc";
+  const sortDir = sortDirParam === "desc" ? "desc" : "asc";
   return { sortKey, sortDir };
 }
 
 function buildRunsSortParams(sortKey: string, sortDir: SortDirection, current: URLSearchParams): URLSearchParams {
   const params = new URLSearchParams(current);
-  if (sortKey === DEFAULT_RUNS_SORT_KEY && sortDir === "asc") {
+  if (sortKey === DEFAULT_RUNS_SORT_KEY && sortDir === DEFAULT_RUNS_SORT_DIR) {
     params.delete("sort_by");
     params.delete("sort_dir");
   } else {
