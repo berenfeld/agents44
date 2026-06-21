@@ -45,40 +45,102 @@ def _execute(conn: Connection, sql: str) -> None:
     conn.execute(text(sql))
 
 
+def _app_db_role(conn: Connection) -> str:
+    return conn.execute(text("SELECT current_user")).scalar_one()
+
+
 def create_department_schema(conn: Connection, department: str) -> str:
     schema = department_schema_name(department)
-    _execute(conn, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(schema)}")
+    owner = _app_db_role(conn)
+    owner_sql = quote_ident(owner)
+    schema_sql = quote_ident(schema)
+    _execute(conn, f"CREATE SCHEMA IF NOT EXISTS {schema_sql}")
+    _execute(conn, f"ALTER SCHEMA {schema_sql} OWNER TO {owner_sql}")
     return schema
 
 
-def _grant_full_schema(conn: Connection, role: str, schema: str) -> None:
-    role_sql = quote_ident(role)
+def _grant_department_schema_access(
+    conn: Connection,
+    *,
+    app_role: str,
+    agent_role: str,
+    schema: str,
+) -> None:
+    app_sql = quote_ident(app_role)
+    agent_sql = quote_ident(agent_role)
     schema_sql = quote_ident(schema)
-    _execute(conn, f"GRANT ALL ON SCHEMA {schema_sql} TO {role_sql}")
-    _execute(conn, f"GRANT ALL ON ALL TABLES IN SCHEMA {schema_sql} TO {role_sql}")
-    _execute(conn, f"GRANT ALL ON ALL SEQUENCES IN SCHEMA {schema_sql} TO {role_sql}")
-    _execute(conn, f"GRANT ALL ON ALL FUNCTIONS IN SCHEMA {schema_sql} TO {role_sql}")
+    _execute(conn, f"GRANT ALL ON SCHEMA {schema_sql} TO {agent_sql}")
+    _execute(conn, f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {schema_sql} TO {agent_sql}")
+    _execute(conn, f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA {schema_sql} TO {agent_sql}")
+    _execute(conn, f"GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA {schema_sql} TO {agent_sql}")
     _execute(
         conn,
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema_sql} "
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {app_sql} IN SCHEMA {schema_sql} "
+        f"GRANT ALL ON TABLES TO {agent_sql}",
+    )
+    _execute(
+        conn,
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {app_sql} IN SCHEMA {schema_sql} "
+        f"GRANT ALL ON SEQUENCES TO {agent_sql}",
+    )
+
+
+def _reassign_schema_objects(conn: Connection, schema: str, new_owner: str) -> None:
+    if not IDENTIFIER_RE.match(schema) or not IDENTIFIER_RE.match(new_owner):
+        raise ValueError("Invalid schema or owner identifier")
+    schema_sql = quote_ident(schema)
+    owner_sql = quote_ident(new_owner)
+    _execute(
+        conn,
+        f"""
+        DO $reassign$ DECLARE item record;
+        BEGIN
+          FOR item IN
+            SELECT c.relkind, c.relname
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = '{schema}'
+              AND c.relkind IN ('r', 'v', 'm', 'S', 'f', 'p')
+          LOOP
+            IF item.relkind = 'S' THEN
+              EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', '{schema}', item.relname, '{new_owner}');
+            ELSE
+              EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '{schema}', item.relname, '{new_owner}');
+            END IF;
+          END LOOP;
+        END $reassign$;
+        """,
+    )
+    _execute(conn, f"ALTER SCHEMA {schema_sql} OWNER TO {owner_sql}")
+
+
+def _provision_agent_owned_schema(conn: Connection, agent_role: str, schema: str) -> None:
+    schema_sql = quote_ident(schema)
+    role_sql = quote_ident(agent_role)
+    _execute(conn, f"CREATE SCHEMA IF NOT EXISTS {schema_sql}")
+    _reassign_schema_objects(conn, schema, agent_role)
+    _execute(
+        conn,
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {role_sql} IN SCHEMA {schema_sql} "
         f"GRANT ALL ON TABLES TO {role_sql}",
     )
     _execute(
         conn,
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema_sql} "
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {role_sql} IN SCHEMA {schema_sql} "
         f"GRANT ALL ON SEQUENCES TO {role_sql}",
     )
 
 
-def _grant_read_schema(conn: Connection, role: str, schema: str) -> None:
-    role_sql = quote_ident(role)
+def _grant_read_schema(conn: Connection, app_role: str, agent_role: str, schema: str) -> None:
+    app_sql = quote_ident(app_role)
+    agent_sql = quote_ident(agent_role)
     schema_sql = quote_ident(schema)
-    _execute(conn, f"GRANT USAGE ON SCHEMA {schema_sql} TO {role_sql}")
-    _execute(conn, f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema_sql} TO {role_sql}")
+    _execute(conn, f"GRANT USAGE ON SCHEMA {schema_sql} TO {agent_sql}")
+    _execute(conn, f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema_sql} TO {agent_sql}")
     _execute(
         conn,
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {schema_sql} "
-        f"GRANT SELECT ON TABLES TO {role_sql}",
+        f"ALTER DEFAULT PRIVILEGES FOR ROLE {app_sql} IN SCHEMA {schema_sql} "
+        f"GRANT SELECT ON TABLES TO {agent_sql}",
     )
 
 
@@ -99,9 +161,9 @@ def create_agent_role(
     role = agent_db_user(agent_name)
     agent_schema = agent_schema_name(agent_name)
     dept_schema = create_department_schema(conn, department)
+    app_role = _app_db_role(conn)
     secret = password or secrets.token_urlsafe(32)
 
-    _execute(conn, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(agent_schema)}")
     _execute(
         conn,
         f"DO $$ BEGIN CREATE ROLE {quote_ident(role)} LOGIN PASSWORD {quote_literal(secret)}; "
@@ -109,8 +171,8 @@ def create_agent_role(
         f"ALTER ROLE {quote_ident(role)} LOGIN PASSWORD {quote_literal(secret)}; END $$;",
     )
 
-    _grant_full_schema(conn, role, dept_schema)
-    _grant_full_schema(conn, role, agent_schema)
+    _provision_agent_owned_schema(conn, role, agent_schema)
+    _grant_department_schema_access(conn, app_role=app_role, agent_role=role, schema=dept_schema)
     _revoke_public_access(conn, role)
 
     return {
@@ -124,7 +186,8 @@ def create_agent_role(
 def grant_cross_schema_read(
     conn: Connection,
     *,
-    role: str,
+    app_role: str,
+    agent_role: str,
     department_schemas: list[str],
     agent_schemas: list[str],
     writable_department_schema: str,
@@ -133,15 +196,43 @@ def grant_cross_schema_read(
     writable = {writable_department_schema, writable_agent_schema}
     for schema in department_schemas:
         if schema not in writable:
-            _grant_read_schema(conn, role, schema)
+            _grant_read_schema(conn, app_role, agent_role, schema)
     for schema in agent_schemas:
         if schema not in writable:
-            _grant_read_schema(conn, role, schema)
+            _grant_read_schema(conn, app_role, agent_role, schema)
 
 
 def drop_legacy_public_agent_tables(conn: Connection) -> None:
     _execute(conn, "DROP TABLE IF EXISTS stock_prices CASCADE")
     _execute(conn, "DROP TABLE IF EXISTS stocks CASCADE")
+
+
+def repair_all_agent_db_grants(conn: Connection) -> None:
+    app_role = _app_db_role(conn)
+    departments = [
+        row[0]
+        for row in conn.execute(text("SELECT name FROM system_departments ORDER BY name")).fetchall()
+    ]
+    agents = conn.execute(
+        text("SELECT name, department, db_user FROM system_agents ORDER BY name")
+    ).fetchall()
+
+    for name in departments:
+        create_department_schema(conn, name)
+
+    for agent_name, department, db_user in agents:
+        if not db_user:
+            continue
+        role = db_user
+        agent_schema = agent_schema_name(agent_name)
+        dept_schema = department_schema_name(department)
+        _provision_agent_owned_schema(conn, role, agent_schema)
+        _grant_department_schema_access(
+            conn, app_role=app_role, agent_role=role, schema=dept_schema
+        )
+        _revoke_public_access(conn, role)
+
+    refresh_all_cross_grants(conn)
 
 
 def provision_existing_agents_and_departments(conn: Connection) -> None:
@@ -170,6 +261,7 @@ def provision_existing_agents_and_departments(conn: Connection) -> None:
 
 
 def refresh_all_cross_grants(conn: Connection) -> None:
+    app_role = _app_db_role(conn)
     departments = [
         row[0]
         for row in conn.execute(text("SELECT name FROM system_departments ORDER BY name")).fetchall()
@@ -185,7 +277,8 @@ def refresh_all_cross_grants(conn: Connection) -> None:
             continue
         grant_cross_schema_read(
             conn,
-            role=db_user,
+            app_role=app_role,
+            agent_role=db_user,
             department_schemas=department_schemas,
             agent_schemas=agent_schemas,
             writable_department_schema=department_schema_name(department),
@@ -198,9 +291,9 @@ def drop_agent_db_access(conn: Connection, *, agent_name: str, db_user: str | No
     schema = agent_schema_name(agent_name)
     role_sql = quote_ident(role)
     schema_sql = quote_ident(schema)
+    _execute(conn, f"DROP SCHEMA IF EXISTS {schema_sql} CASCADE")
     _execute(conn, f"DROP OWNED BY {role_sql} CASCADE")
     _execute(conn, f"DROP ROLE IF EXISTS {role_sql}")
-    _execute(conn, f"DROP SCHEMA IF EXISTS {schema_sql} CASCADE")
 
 
 def drop_department_schema(conn: Connection, department: str) -> None:
