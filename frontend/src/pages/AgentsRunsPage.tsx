@@ -150,10 +150,14 @@ export default function AgentsRunsPage() {
                   )}
                 </td>
                 <td className="px-4 py-2">
-                  <ViewRowMenu onView={() => openPrompt(run)} disabled={!run.prompt_path && !run.prompt_preview} />
+                  <ViewRowMenu
+                    label="View prompt"
+                    onView={() => openPrompt(run)}
+                    disabled={!run.prompt_path && !run.prompt_preview}
+                  />
                 </td>
                 <td className="px-4 py-2">
-                  <ViewRowMenu onView={() => openLog(run)} disabled={!run.log_path} />
+                  <ViewRowMenu label="View log" onView={() => openLog(run)} disabled={!run.log_path} />
                 </td>
               </tr>
             ))}
@@ -162,9 +166,11 @@ export default function AgentsRunsPage() {
       </div>
 
       <Modal open={modalOpen} onOpenChange={setModalOpen} title={modalTitle} size="large">
-        <pre className="max-h-[75vh] overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-4 text-xs text-slate-100">
-          {modalContent || "(empty)"}
-        </pre>
+        <div className="max-h-[75vh] overflow-y-auto rounded border bg-white">
+          <pre className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-slate-900">
+            {modalContent || "(empty)"}
+          </pre>
+        </div>
       </Modal>
     </div>
   );
