@@ -7,7 +7,7 @@ import { RunStatusBadge } from "@/components/agents/RunStatusBadge";
 import { RunSummaryViewer } from "@/components/agents/RunSummaryViewer";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
-import { formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
+import { cn, formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
 import { countMatches } from "@/lib/search-highlight";
 import { Modal } from "@/components/ui/modal";
 import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
@@ -19,7 +19,7 @@ import {
   DesktopTableShell,
   MobileCardList,
 } from "@/components/ui/data-card";
-import { Button } from "@/components/ui/primitives";
+import { Button, Label } from "@/components/ui/primitives";
 
 function filesUrl(path: string) {
   return `/agents_files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -66,9 +66,36 @@ function buildRunsSortParams(sortKey: string, sortDir: SortDirection, current: U
   return params;
 }
 
+function sumRunTotals(items: AgentRun[]) {
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let cost = 0;
+  let hasTokens = false;
+  let hasCost = false;
+
+  for (const run of items) {
+    if (run.tokens_in != null || run.tokens_out != null) {
+      hasTokens = true;
+      tokensIn += run.tokens_in ?? 0;
+      tokensOut += run.tokens_out ?? 0;
+    }
+    if (run.estimated_cost_usd != null) {
+      hasCost = true;
+      cost += run.estimated_cost_usd;
+    }
+  }
+
+  return {
+    tokensIn: hasTokens ? tokensIn : null,
+    tokensOut: hasTokens ? tokensOut : null,
+    cost: hasCost ? cost : null,
+  };
+}
+
 export default function AgentsRunsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { sortKey, sortDir } = useMemo(() => parseRunsSortParams(searchParams), [searchParams]);
+  const agentFilter = searchParams.get("agent_id") ?? "";
 
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [modalTitle, setModalTitle] = useState("");
@@ -94,6 +121,23 @@ export default function AgentsRunsPage() {
     [],
   );
 
+  const agentOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const run of runs) {
+      map.set(run.agent_id, run.agent_name || String(run.agent_id));
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [runs]);
+
+  const filteredRuns = useMemo(() => {
+    if (!agentFilter) return runs;
+    const agentId = Number(agentFilter);
+    if (Number.isNaN(agentId)) return runs;
+    return runs.filter((run) => run.agent_id === agentId);
+  }, [runs, agentFilter]);
+
+  const runTotals = useMemo(() => sumRunTotals(filteredRuns), [filteredRuns]);
+
   const onSortChange = useCallback(
     (nextSortKey: string | null, nextSortDir: SortDirection) => {
       setSearchParams(
@@ -105,7 +149,7 @@ export default function AgentsRunsPage() {
   );
 
   const { sorted, sortKey: activeSortKey, sortDir: activeSortDir, toggleSort } = useTableSort(
-    runs,
+    filteredRuns,
     sortAccessors,
     DEFAULT_RUNS_SORT_KEY,
     { sortKey, sortDir, onSortChange },
@@ -231,7 +275,52 @@ export default function AgentsRunsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Agents Runs</h1>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <h1 className="text-2xl font-semibold">Agents Runs</h1>
+        <div className="flex flex-wrap items-end gap-x-5 gap-y-2 text-sm">
+          <div className="flex min-w-[12rem] flex-col gap-1">
+            <Label htmlFor="runs-agent-filter">Agent</Label>
+            <select
+              id="runs-agent-filter"
+              className={cn(
+                "h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400",
+              )}
+              value={agentFilter}
+              onChange={(e) => {
+                setSearchParams(
+                  (current) => {
+                    const params = new URLSearchParams(current);
+                    if (e.target.value) {
+                      params.set("agent_id", e.target.value);
+                    } else {
+                      params.delete("agent_id");
+                    }
+                    return params;
+                  },
+                  { replace: true },
+                );
+              }}
+            >
+              <option value="">All agents</option>
+              {agentOptions.map(([id, name]) => (
+                <option key={id} value={String(id)}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 pb-0.5 text-slate-600">
+            <p>
+              <span className="font-medium text-slate-700">Total tokens:</span>{" "}
+              <span className="tabular-nums">{formatTokens(runTotals.tokensIn, runTotals.tokensOut)}</span>
+            </p>
+            <p>
+              <span className="font-medium text-slate-700">Total cost:</span>{" "}
+              <span className="tabular-nums">{formatCost(runTotals.cost)}</span>
+            </p>
+          </div>
+        </div>
+      </div>
 
       <DesktopTableShell>
         <table className="min-w-full text-sm">
