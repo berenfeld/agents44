@@ -154,8 +154,19 @@ def _write_run_log_finish(
     estimated_cost_usd: float | None = None,
     error_message: str | None = None,
     extra_notes: str | None = None,
+    stdout_written: bool = False,
 ) -> None:
     with open(log_path, "a", encoding="utf-8") as log_file:
+        if not stdout_written:
+            log_file.write("\n=== STDOUT ===\n")
+            log_file.write(stdout if stdout else "(empty)\n")
+        log_file.write("\n=== STDERR ===\n")
+        log_file.write(stderr if stderr else "(empty)\n")
+        transcript = format_claude_stream_transcript(stdout)
+        if transcript:
+            log_file.write("\n=== TRANSCRIPT (thinking + text) ===\n")
+            log_file.write(transcript)
+            log_file.write("\n")
         log_file.write("=== RUN END ===\n")
         log_file.write(f"status: {status.value}\n")
         log_file.write(f"exit_code: {returncode}\n")
@@ -170,15 +181,64 @@ def _write_run_log_finish(
             log_file.write(f"error_message: {error_message}\n")
         if extra_notes:
             log_file.write(f"notes: {extra_notes}\n")
+
+
+def _run_claude_subprocess(
+    log_path: Path,
+    cmd: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    timeout_seconds: int,
+) -> tuple[int, str, str]:
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+
+    with open(log_path, "a", encoding="utf-8") as log_file:
         log_file.write("\n=== STDOUT ===\n")
-        log_file.write(stdout if stdout else "(empty)\n")
-        log_file.write("\n=== STDERR ===\n")
-        log_file.write(stderr if stderr else "(empty)\n")
-        transcript = format_claude_stream_transcript(stdout)
-        if transcript:
-            log_file.write("\n=== TRANSCRIPT (thinking + text) ===\n")
-            log_file.write(transcript)
-            log_file.write("\n")
+        log_file.flush()
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        def read_stdout() -> None:
+            if not proc.stdout:
+                return
+            for line in proc.stdout:
+                stdout_parts.append(line)
+                log_file.write(line)
+                log_file.flush()
+
+        def read_stderr() -> None:
+            if not proc.stderr:
+                return
+            for line in proc.stderr:
+                stderr_parts.append(line)
+
+        stdout_thread = threading.Thread(target=read_stdout, daemon=True, name="agent-run-stdout")
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True, name="agent-run-stderr")
+        stdout_thread.start()
+        stderr_thread.start()
+
+        try:
+            returncode = proc.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
+            raise
+
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+
+    return returncode, "".join(stdout_parts), "".join(stderr_parts)
 
 
 def build_run_summary_instructions(summary_path: str) -> str:
@@ -372,28 +432,35 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         started_monotonic = time.monotonic()
 
         try:
-            result = subprocess.run(
+            returncode, stdout, stderr = _run_claude_subprocess(
+                log_path,
                 cmd,
                 cwd=cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
                 env=env,
-                timeout=timeout_seconds,
-                check=False,
+                timeout_seconds=timeout_seconds,
             )
-        except subprocess.TimeoutExpired as exc:
+        except subprocess.TimeoutExpired:
             duration_seconds = time.monotonic() - started_monotonic
             timeout_note = f"Agent run timed out after {timeout_seconds} seconds"
+            partial_stdout = ""
+            partial_stderr = ""
+            if log_path.exists():
+                log_text = log_path.read_text(encoding="utf-8")
+                if "\n=== STDOUT ===\n" in log_text:
+                    partial_stdout = log_text.split("\n=== STDOUT ===\n", 1)[1]
+                    for marker in ("\n=== STDERR ===\n", "\n=== RUN END ===\n"):
+                        if marker in partial_stdout:
+                            partial_stdout = partial_stdout.split(marker, 1)[0]
             _write_run_log_finish(
                 log_path,
                 returncode=-1,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "",
+                stdout=partial_stdout,
+                stderr=partial_stderr,
                 duration_seconds=duration_seconds,
                 status=RunStatus.failed,
                 error_message=RUN_FAILED_MESSAGE,
                 extra_notes=timeout_note,
+                stdout_written=True,
             )
             _log_run_finish(
                 {
@@ -406,31 +473,29 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                     "timeout_seconds": timeout_seconds,
                     "error_message": RUN_FAILED_MESSAGE,
                     "detail": timeout_note,
-                    "stderr": _truncate_text(exc.stderr or ""),
+                    "stderr": _truncate_text(partial_stderr) if partial_stderr else None,
                 }
             )
             _finalize_run(run, agent, RunStatus.failed, RUN_FAILED_MESSAGE, None, None, None)
             return
 
         duration_seconds = time.monotonic() - started_monotonic
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
 
         status = RunStatus.success
         error_message = None
-        if result.returncode != 0:
+        if returncode != 0:
             status = RunStatus.failed
             error_message = RUN_FAILED_MESSAGE
 
         tokens_in, tokens_out = parse_usage_from_claude_output(stdout)
         estimated_cost = compute_estimated_cost(agent.model, tokens_in, tokens_out)
         exit_note = None
-        if result.returncode != 0:
-            exit_note = f"Claude CLI exited with code {result.returncode}"
+        if returncode != 0:
+            exit_note = f"Claude CLI exited with code {returncode}"
 
         _write_run_log_finish(
             log_path,
-            returncode=result.returncode,
+            returncode=returncode,
             stdout=stdout,
             stderr=stderr,
             duration_seconds=duration_seconds,
@@ -440,6 +505,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
             estimated_cost_usd=estimated_cost,
             error_message=error_message,
             extra_notes=exit_note,
+            stdout_written=True,
         )
         _log_run_finish(
             {
@@ -447,7 +513,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                 "agent_id": agent.id,
                 "agent_name": agent.name,
                 "status": status.value,
-                "exit_code": result.returncode,
+                "exit_code": returncode,
                 "duration_seconds": round(duration_seconds, 3),
                 "tokens_in": tokens_in,
                 "tokens_out": tokens_out,

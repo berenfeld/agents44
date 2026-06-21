@@ -6,7 +6,7 @@ from app.errors import APIClientError, api_endpoint
 from app.extensions import db
 from app.models import SystemAgentRun
 from app.services.model_registry import get_default_model, get_supported_models
-from app.services.workspace import workspace_root
+from app.services.workspace import RUN_SUMMARY_FILE, workspace_root
 
 runs_bp = Blueprint("runs", __name__)
 models_bp = Blueprint("models", __name__)
@@ -75,3 +75,18 @@ def get_run_prompt(run_id: int):
     if not prompt_file.exists():
         return jsonify({"prompt": ""})
     return jsonify({"prompt": prompt_file.read_text(encoding="utf-8")})
+
+
+@runs_bp.get("/<int:run_id>/summary")
+@api_endpoint
+@login_required
+def get_run_summary(run_id: int):
+    run = db.session.get(SystemAgentRun, run_id)
+    if not run:
+        raise APIClientError("Not found", 404)
+    if not run.run_dir:
+        return jsonify({"summary": ""})
+    summary_file = workspace_root() / run.run_dir / RUN_SUMMARY_FILE
+    if not summary_file.exists():
+        return jsonify({"summary": ""})
+    return jsonify({"summary": summary_file.read_text(encoding="utf-8")})

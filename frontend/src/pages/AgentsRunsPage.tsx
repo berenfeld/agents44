@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AgentRun, api } from "@/api/client";
+import { RunLogViewer } from "@/components/agents/RunLogViewer";
+import { RunStatusBadge } from "@/components/agents/RunStatusBadge";
+import { RunSummaryViewer } from "@/components/agents/RunSummaryViewer";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { formatCost, formatDate, formatDuration, runDurationSeconds } from "@/lib/utils";
@@ -11,11 +14,18 @@ function filesUrl(path: string) {
   return `/agents_files/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+function isActiveRun(status: string) {
+  return status === "running" || status === "pending";
+}
+
 export default function AgentsRunsPage() {
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [modalTitle, setModalTitle] = useState("");
   const [modalContent, setModalContent] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [modalKind, setModalKind] = useState<"log" | "prompt" | "summary" | null>(null);
+  const [modalRunId, setModalRunId] = useState<number | null>(null);
+  const [logSearch, setLogSearch] = useState("");
 
   const sortAccessors = useMemo(
     () => ({
@@ -36,19 +46,74 @@ export default function AgentsRunsPage() {
 
   const { sorted, sortKey, sortDir, toggleSort } = useTableSort(runs, sortAccessors, "id");
 
-  const load = async () => {
+  const modalRun = useMemo(
+    () => (modalRunId == null ? null : runs.find((run) => run.id === modalRunId) ?? null),
+    [modalRunId, runs],
+  );
+
+  const load = useCallback(async () => {
     const res = await api.get<{ items: AgentRun[] }>("/runs");
     setRuns(res.data.items);
-  };
+  }, []);
+
+  const fetchLog = useCallback(async (runId: number) => {
+    const res = await api.get<{ log: string }>(`/runs/${runId}/log`);
+    return res.data.log || "(empty)";
+  }, []);
+
+  const fetchPrompt = useCallback(async (runId: number) => {
+    const res = await api.get<{ prompt: string }>(`/runs/${runId}/prompt`);
+    return res.data.prompt || "(empty)";
+  }, []);
+
+  const fetchSummary = useCallback(async (runId: number) => {
+    const res = await api.get<{ summary: string }>(`/runs/${runId}/summary`);
+    return res.data.summary || "(empty)";
+  }, []);
 
   useEffect(() => {
     load().catch(console.error);
     const timer = setInterval(() => load().catch(console.error), 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [load]);
 
-  const openModal = async (title: string, fetchContent: () => Promise<string>) => {
+  useEffect(() => {
+    if (!modalOpen || modalRunId == null) {
+      return;
+    }
+    if (!modalRun || !isActiveRun(modalRun.status)) {
+      return;
+    }
+
+    const refresh = () => {
+      if (modalKind === "log") {
+        fetchLog(modalRunId)
+          .then(setModalContent)
+          .catch(console.error);
+        return;
+      }
+      if (modalKind === "summary") {
+        fetchSummary(modalRunId)
+          .then(setModalContent)
+          .catch(console.error);
+      }
+    };
+
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => clearInterval(timer);
+  }, [modalOpen, modalKind, modalRunId, modalRun, fetchLog, fetchSummary]);
+
+  const openModal = async (
+    title: string,
+    kind: "log" | "prompt" | "summary",
+    runId: number,
+    fetchContent: () => Promise<string>,
+  ) => {
     setModalTitle(title);
+    setModalKind(kind);
+    setModalRunId(runId);
+    setLogSearch("");
     setModalContent("Loading...");
     setModalOpen(true);
     try {
@@ -59,17 +124,24 @@ export default function AgentsRunsPage() {
   };
 
   const openPrompt = (run: AgentRun) => {
-    openModal(`Run #${run.id} prompt`, async () => {
-      const res = await api.get<{ prompt: string }>(`/runs/${run.id}/prompt`);
-      return res.data.prompt || "(empty)";
-    });
+    openModal(`Run #${run.id} prompt`, "prompt", run.id, () => fetchPrompt(run.id));
   };
 
   const openLog = (run: AgentRun) => {
-    openModal(`Run #${run.id} log`, async () => {
-      const res = await api.get<{ log: string }>(`/runs/${run.id}/log`);
-      return res.data.log || "(empty)";
-    });
+    openModal(`Run #${run.id} log`, "log", run.id, () => fetchLog(run.id));
+  };
+
+  const openSummary = (run: AgentRun) => {
+    openModal(`Run #${run.id} summary`, "summary", run.id, () => fetchSummary(run.id));
+  };
+
+  const handleModalOpenChange = (open: boolean) => {
+    setModalOpen(open);
+    if (!open) {
+      setModalKind(null);
+      setModalRunId(null);
+      setLogSearch("");
+    }
   };
 
   return (
@@ -134,6 +206,7 @@ export default function AgentsRunsPage() {
               <th className="px-4 py-2">Run folder</th>
               <th className="px-4 py-2">Prompt</th>
               <th className="px-4 py-2">Log</th>
+              <th className="px-4 py-2">Summary</th>
             </tr>
           </thead>
           <tbody>
@@ -141,7 +214,9 @@ export default function AgentsRunsPage() {
               <tr key={run.id} className="border-t">
                 <td className="px-4 py-2">{run.id}</td>
                 <td className="px-4 py-2">{run.agent_name || run.agent_id}</td>
-                <td className="px-4 py-2">{run.status}</td>
+                <td className="px-4 py-2">
+                  <RunStatusBadge status={run.status} />
+                </td>
                 <td className="px-4 py-2">{run.model || "-"}</td>
                 <td className="px-4 py-2">{run.tokens_in ?? "-"}</td>
                 <td className="px-4 py-2">{run.tokens_out ?? "-"}</td>
@@ -166,7 +241,18 @@ export default function AgentsRunsPage() {
                   />
                 </td>
                 <td className="px-4 py-2">
-                  <ViewRowMenu label="View log" onView={() => openLog(run)} disabled={!run.log_path} />
+                  <ViewRowMenu
+                    label="View log"
+                    onView={() => openLog(run)}
+                    disabled={!run.log_path && !isActiveRun(run.status)}
+                  />
+                </td>
+                <td className="px-4 py-2">
+                  <ViewRowMenu
+                    label="View summary"
+                    onView={() => openSummary(run)}
+                    disabled={!run.run_dir && !isActiveRun(run.status)}
+                  />
                 </td>
               </tr>
             ))}
@@ -174,12 +260,30 @@ export default function AgentsRunsPage() {
         </table>
       </div>
 
-      <Modal open={modalOpen} onOpenChange={setModalOpen} title={modalTitle} size="large">
-        <div className="max-h-[75vh] overflow-y-auto rounded border bg-white">
-          <pre className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-slate-900">
-            {modalContent || "(empty)"}
-          </pre>
-        </div>
+      <Modal open={modalOpen} onOpenChange={handleModalOpenChange} title={modalTitle} size="large">
+        {modalKind === "log" ? (
+          <RunLogViewer
+            content={modalContent}
+            search={logSearch}
+            onSearchChange={setLogSearch}
+            live={modalRun != null && isActiveRun(modalRun.status)}
+          />
+        ) : modalKind === "summary" ? (
+          <RunSummaryViewer
+            content={modalContent}
+            live={
+              modalRun != null &&
+              isActiveRun(modalRun.status) &&
+              (!modalContent.trim() || modalContent === "(empty)")
+            }
+          />
+        ) : (
+          <div className="max-h-[75vh] overflow-y-auto rounded border bg-white">
+            <pre className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-slate-900">
+              {modalContent || "(empty)"}
+            </pre>
+          </div>
+        )}
       </Modal>
     </div>
   );

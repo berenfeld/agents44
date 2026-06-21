@@ -59,6 +59,7 @@ export type AgentRun = {
   run_dir: string | null;
   prompt_path: string | null;
   log_path: string | null;
+  summary_path: string | null;
   prompt_preview: string | null;
   error_message: string | null;
 };
@@ -73,7 +74,9 @@ export type SystemParam = {
 };
 
 export type AgentDbTable = {
+  schema: string;
   name: string;
+  qualified_name: string;
   row_count: number;
 };
 
@@ -87,7 +90,9 @@ export type AgentDbColumn = {
 };
 
 export type AgentDbSchema = {
+  schema: string;
   name: string;
+  qualified_name: string;
   columns: AgentDbColumn[];
   primary_keys: string[];
   foreign_keys: Array<{

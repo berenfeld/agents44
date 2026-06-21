@@ -49,12 +49,13 @@ class SystemAgentRun(db.Model):
             "run_dir": self.run_dir,
             "prompt_path": self.prompt_path,
             "log_path": self.log_path,
+            "summary_path": f"{self.run_dir}/{RUN_SUMMARY_FILE}" if self.run_dir else None,
             "prompt_preview": prompt_preview,
             "error_message": self.error_message,
         }
 
     def _read_prompt_preview(self) -> str | None:
-        from app.services.workspace import PROMPT_PREVIEW_CHARS, workspace_root
+        from app.services.workspace import PROMPT_PREVIEW_CHARS, RUN_SUMMARY_FILE, workspace_root
 
         if not self.prompt_path:
             return None

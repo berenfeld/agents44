@@ -14,14 +14,14 @@ def list_tables():
     return jsonify(agent_db.list_tables())
 
 
-@agent_db_bp.get("/tables/<table_name>/schema")
+@agent_db_bp.get("/tables/<path:table_name>/schema")
 @api_endpoint
 @login_required
 def table_schema(table_name: str):
     return jsonify(agent_db.get_table_schema(table_name))
 
 
-@agent_db_bp.get("/tables/<table_name>/rows")
+@agent_db_bp.get("/tables/<path:table_name>/rows")
 @api_endpoint
 @login_required
 def table_rows(table_name: str):
@@ -30,7 +30,7 @@ def table_rows(table_name: str):
     return jsonify(agent_db.list_rows(table_name, limit=limit, offset=offset))
 
 
-@agent_db_bp.post("/tables/<table_name>/rows")
+@agent_db_bp.post("/tables/<path:table_name>/rows")
 @api_endpoint
 @login_required
 def create_row(table_name: str):
@@ -40,7 +40,7 @@ def create_row(table_name: str):
     return jsonify(row), 201
 
 
-@agent_db_bp.put("/tables/<table_name>/rows")
+@agent_db_bp.put("/tables/<path:table_name>/rows")
 @api_endpoint
 @login_required
 def update_row(table_name: str):
@@ -51,7 +51,7 @@ def update_row(table_name: str):
     return jsonify(row)
 
 
-@agent_db_bp.delete("/tables/<table_name>/rows")
+@agent_db_bp.delete("/tables/<path:table_name>/rows")
 @api_endpoint
 @login_required
 def delete_row(table_name: str):

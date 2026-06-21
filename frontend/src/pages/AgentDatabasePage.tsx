@@ -76,6 +76,10 @@ function buildColumns(schema: AgentDbSchema): Column<GridRow>[] {
   return [SelectColumn, ...dataColumns];
 }
 
+function tableApiPath(qualifiedName: string) {
+  return `/agent-db/tables/${encodeURIComponent(qualifiedName)}`;
+}
+
 export default function AgentDatabasePage() {
   const [tables, setTables] = useState<AgentDbTable[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
@@ -93,17 +97,27 @@ export default function AgentDatabasePage() {
     const res = await api.get<AgentDbTable[]>("/agent-db/tables");
     setTables(res.data);
     if (!selectedTable && res.data.length > 0) {
-      setSelectedTable(res.data[0].name);
+      setSelectedTable(res.data[0].qualified_name);
     }
   }, [selectedTable]);
+
+  const tablesBySchema = useMemo(() => {
+    const grouped = new Map<string, AgentDbTable[]>();
+    for (const table of tables) {
+      const items = grouped.get(table.schema) ?? [];
+      items.push(table);
+      grouped.set(table.schema, items);
+    }
+    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [tables]);
 
   const loadTableData = useCallback(async (tableName: string) => {
     setLoading(true);
     setError(null);
     try {
       const [schemaRes, rowsRes] = await Promise.all([
-        api.get<AgentDbSchema>(`/agent-db/tables/${tableName}/schema`),
-        api.get<{ items: AgentDbRow[]; total: number }>(`/agent-db/tables/${tableName}/rows`),
+        api.get<AgentDbSchema>(`${tableApiPath(tableName)}/schema`),
+        api.get<{ items: AgentDbRow[]; total: number }>(`${tableApiPath(tableName)}/rows`),
       ]);
       setSchema(schemaRes.data);
       setRows(toGridRows(rowsRes.data.items, schemaRes.data));
@@ -154,7 +168,7 @@ export default function AgentDatabasePage() {
           try {
             const payload = stripInternal(row);
             if (row._isNew) {
-              const res = await api.post<AgentDbRow>(`/agent-db/tables/${selectedTable}/rows`, {
+              const res = await api.post<AgentDbRow>(`${tableApiPath(selectedTable)}/rows`, {
                 values: payload,
               });
               setRows((current) =>
@@ -172,7 +186,7 @@ export default function AgentDatabasePage() {
               await loadTables();
               setTotal((value) => value + 1);
             } else {
-              const res = await api.put<AgentDbRow>(`/agent-db/tables/${selectedTable}/rows`, {
+              const res = await api.put<AgentDbRow>(`${tableApiPath(selectedTable)}/rows`, {
                 keys: primaryKeys(schema, row),
                 values: payload,
               });
@@ -214,7 +228,7 @@ export default function AgentDatabasePage() {
     try {
       const targets = rows.filter((row) => selectedRows.has(row._rowId) && !row._isNew);
       for (const row of targets) {
-        await api.delete(`/agent-db/tables/${selectedTable}/rows`, {
+        await api.delete(`${tableApiPath(selectedTable)}/rows`, {
           data: { keys: primaryKeys(schema, row) },
         });
       }
@@ -238,37 +252,51 @@ export default function AgentDatabasePage() {
       <div>
         <h1 className="text-2xl font-semibold">Agent Database</h1>
         <p className="text-sm text-slate-600">
-          Browse and edit agent-owned tables. System tables (<code>system_*</code>,{" "}
-          <code>alembic_version</code>) are hidden. Cell edits save automatically.
+          Browse and edit tables across all PostgreSQL schemas (agent, department, and shared). System tables in{" "}
+          <code>public</code> (<code>system_*</code>, <code>alembic_version</code>) are hidden. Cell edits save
+          automatically.
         </p>
       </div>
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
 
       <div className="flex min-h-[32rem] gap-4">
-        <aside className="w-56 shrink-0 rounded-lg border bg-white p-3">
+        <aside className="w-64 shrink-0 rounded-lg border bg-white p-3">
           <h2 className="mb-2 text-sm font-semibold text-slate-700">Tables</h2>
-          <ul className="space-y-1">
-            {tables.map((table) => (
-              <li key={table.name}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedTable(table.name)}
-                  className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
-                    selectedTable === table.name
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="font-medium">{table.name}</span>
-                  <span className={`ml-1 text-xs ${selectedTable === table.name ? "text-slate-300" : "text-slate-500"}`}>
-                    ({table.row_count})
-                  </span>
-                </button>
-              </li>
+          <div className="space-y-3">
+            {tablesBySchema.map(([schemaName, schemaTables]) => (
+              <div key={schemaName}>
+                <h3 className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {schemaName}
+                </h3>
+                <ul className="space-y-1">
+                  {schemaTables.map((table) => (
+                    <li key={table.qualified_name}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTable(table.qualified_name)}
+                        className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
+                          selectedTable === table.qualified_name
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <span className="font-medium">{table.name}</span>
+                        <span
+                          className={`ml-1 text-xs ${
+                            selectedTable === table.qualified_name ? "text-slate-300" : "text-slate-500"
+                          }`}
+                        >
+                          ({table.row_count})
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-            {tables.length === 0 ? <li className="text-sm text-slate-500">No agent tables yet</li> : null}
-          </ul>
+            {tables.length === 0 ? <p className="text-sm text-slate-500">No tables yet</p> : null}
+          </div>
         </aside>
 
         <section className="min-w-0 flex-1 space-y-3">
@@ -293,7 +321,7 @@ export default function AgentDatabasePage() {
             {busy ? <span className="text-sm text-slate-500">Saving…</span> : null}
             {selectedTable ? (
               <span className="ml-auto text-sm text-slate-500">
-                {total} row{total === 1 ? "" : "s"}
+                {selectedTable} · {total} row{total === 1 ? "" : "s"}
                 {rows.length < total ? ` (showing ${rows.length})` : ""}
               </span>
             ) : null}
