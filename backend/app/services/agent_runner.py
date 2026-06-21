@@ -18,6 +18,7 @@ from app.models import RunStatus, SystemAgent, SystemAgentRun, TriggerSource
 from app.services.email import maybe_notify_run
 from app.services.model_registry import compute_estimated_cost, parse_usage_from_claude_output
 from app.services.params import get_claude_cli_extra_args
+from app.services.db_provisioning import build_agent_db_instructions
 from app.services.workspace import ensure_agent_folder, ensure_run_folder, read_prompt_inputs, safe_path, workspace_root
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,12 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
         f"Department: {agent.department}",
         f"Model: {agent.model}",
         f"Cron: {agent.crond or '(none)'}",
+        "",
+        build_agent_db_instructions(
+            agent_name=agent.name,
+            department=agent.department,
+            db_user=agent.db_user,
+        ),
         "",
         "# Input files",
         read_prompt_inputs(agent.department, agent.name),

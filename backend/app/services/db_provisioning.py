@@ -330,6 +330,39 @@ def agent_database_url(
     )
 
 
+def build_agent_db_instructions(*, agent_name: str, department: str, db_user: str | None = None) -> str:
+    personal_schema = agent_schema_name(agent_name)
+    shared_schema = department_schema_name(department)
+    role = db_user or agent_db_user(agent_name)
+    return "\n".join(
+        [
+            "# Database access",
+            "",
+            f"You connect to PostgreSQL as role `{role}`.",
+            f"Your `search_path` is `{personal_schema}, {shared_schema}, public` (personal schema first).",
+            "",
+            "## Where to store data",
+            "",
+            f"- **Personal schema `{personal_schema}`** — tables only you use. You own this schema: CREATE/ALTER/DROP tables, full read/write.",
+            f"- **Department schema `{shared_schema}`** — tables shared with all agents in the `{department}` department. Full read/write here, but the schema is owned by the platform (not you). Do not DROP the schema or shared tables other agents rely on.",
+            "- **Other agent and department schemas** — SELECT only (read other agents' published data; you cannot modify it).",
+            "- **`public` / `system_*` tables** — no access (platform internals).",
+            "",
+            "## MCP tools",
+            "",
+            "- `read_db` — run a SQL query (typically SELECT). Returns rows.",
+            "- `write_db` — run a SQL statement that changes data or schema (INSERT, UPDATE, DELETE, CREATE TABLE, etc.). Commits automatically.",
+            "",
+            "PostgreSQL enforces permissions; the tools do not filter your SQL.",
+            "",
+            "Examples:",
+            f"- Personal table: `CREATE TABLE daily_prices (...)` or `CREATE TABLE {personal_schema}.daily_prices (...)`",
+            f"- Shared table: `CREATE TABLE {shared_schema}.companies (...)`",
+            "- Read another department: `SELECT * FROM research.some_table LIMIT 10`",
+        ]
+    )
+
+
 def load_agent_db_credentials(conn: Connection, agent_name: str) -> dict[str, Any] | None:
     row = conn.execute(
         text(
