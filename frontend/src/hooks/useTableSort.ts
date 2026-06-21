@@ -4,20 +4,38 @@ export type SortDirection = "asc" | "desc";
 
 type SortValue = string | number | boolean | null | undefined;
 
+type ControlledSort = {
+  sortKey: string | null;
+  sortDir: SortDirection;
+  onSortChange: (sortKey: string | null, sortDir: SortDirection) => void;
+};
+
 export function useTableSort<T>(
   rows: T[],
   accessors: Partial<Record<string, (row: T) => SortValue>>,
   defaultKey?: string,
+  controlled?: ControlledSort,
 ) {
-  const [sortKey, setSortKey] = useState<string | null>(defaultKey ?? null);
-  const [sortDir, setSortDir] = useState<SortDirection>("asc");
+  const [internalSortKey, setInternalSortKey] = useState<string | null>(defaultKey ?? null);
+  const [internalSortDir, setInternalSortDir] = useState<SortDirection>("asc");
+
+  const sortKey = controlled?.sortKey ?? internalSortKey;
+  const sortDir = controlled?.sortDir ?? internalSortDir;
 
   const toggleSort = (key: string) => {
+    if (controlled) {
+      if (sortKey === key) {
+        controlled.onSortChange(key, sortDir === "asc" ? "desc" : "asc");
+      } else {
+        controlled.onSortChange(key, "asc");
+      }
+      return;
+    }
     if (sortKey === key) {
-      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      setInternalSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
     } else {
-      setSortKey(key);
-      setSortDir("asc");
+      setInternalSortKey(key);
+      setInternalSortDir("asc");
     }
   };
 

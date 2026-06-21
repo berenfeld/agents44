@@ -6,12 +6,14 @@ export function Modal({
   open,
   onOpenChange,
   title,
+  headerExtra,
   children,
   size = "default",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
+  headerExtra?: React.ReactNode;
   children: React.ReactNode;
   size?: "default" | "large";
 }) {
@@ -27,8 +29,11 @@ export function Modal({
               : "max-w-lg overflow-y-auto",
           )}
         >
-          <Dialog.Title className="shrink-0 text-lg font-semibold">{title}</Dialog.Title>
-          <div className={cn("mt-4", size === "large" && "flex min-h-0 flex-1 flex-col overflow-hidden")}>
+          <div className="flex shrink-0 items-center gap-3">
+            <Dialog.Title className="shrink-0 text-lg font-semibold">{title}</Dialog.Title>
+            {headerExtra ? <div className="flex min-w-0 flex-1 items-center gap-2">{headerExtra}</div> : null}
+          </div>
+          <div className={cn("mt-3", size === "large" && "flex min-h-0 flex-1 flex-col overflow-hidden")}>
             {children}
           </div>
         </Dialog.Content>

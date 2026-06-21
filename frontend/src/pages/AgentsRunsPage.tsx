@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AgentRun, api } from "@/api/client";
 import { RunLogViewer } from "@/components/agents/RunLogViewer";
+import { RunSearchToolbar } from "@/components/agents/RunSearchToolbar";
 import { RunStatusBadge } from "@/components/agents/RunStatusBadge";
 import { RunSummaryViewer } from "@/components/agents/RunSummaryViewer";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
+import { countMatches } from "@/lib/search-highlight";
 import { Modal } from "@/components/ui/modal";
-import { useTableSort } from "@/hooks/useTableSort";
+import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
 
 function filesUrl(path: string) {
   return `/agents_files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -18,14 +20,54 @@ function isActiveRun(status: string) {
   return status === "running" || status === "pending";
 }
 
+const RUNS_SORT_KEYS = new Set([
+  "id",
+  "agent_name",
+  "status",
+  "model",
+  "tokens",
+  "estimated_cost_usd",
+  "trigger_source",
+  "started_at",
+  "duration",
+  "prompt_preview",
+]);
+const DEFAULT_RUNS_SORT_KEY = "id";
+
+function parseRunsSortParams(searchParams: URLSearchParams): { sortKey: string; sortDir: SortDirection } {
+  const sortBy = searchParams.get("sort_by");
+  const sortKey = sortBy && RUNS_SORT_KEYS.has(sortBy) ? sortBy : DEFAULT_RUNS_SORT_KEY;
+  const sortDir = searchParams.get("sort_dir") === "desc" ? "desc" : "asc";
+  return { sortKey, sortDir };
+}
+
+function buildRunsSortParams(sortKey: string, sortDir: SortDirection, current: URLSearchParams): URLSearchParams {
+  const params = new URLSearchParams(current);
+  if (sortKey === DEFAULT_RUNS_SORT_KEY && sortDir === "asc") {
+    params.delete("sort_by");
+    params.delete("sort_dir");
+  } else {
+    params.set("sort_by", sortKey);
+    if (sortDir === "desc") {
+      params.set("sort_dir", "desc");
+    } else {
+      params.delete("sort_dir");
+    }
+  }
+  return params;
+}
+
 export default function AgentsRunsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { sortKey, sortDir } = useMemo(() => parseRunsSortParams(searchParams), [searchParams]);
+
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [modalTitle, setModalTitle] = useState("");
   const [modalContent, setModalContent] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalKind, setModalKind] = useState<"log" | "prompt" | "summary" | null>(null);
   const [modalRunId, setModalRunId] = useState<number | null>(null);
-  const [logSearch, setLogSearch] = useState("");
+  const [modalSearch, setModalSearch] = useState("");
 
   const sortAccessors = useMemo(
     () => ({
@@ -43,12 +85,47 @@ export default function AgentsRunsPage() {
     [],
   );
 
-  const { sorted, sortKey, sortDir, toggleSort } = useTableSort(runs, sortAccessors, "id");
+  const onSortChange = useCallback(
+    (nextSortKey: string | null, nextSortDir: SortDirection) => {
+      setSearchParams(
+        (current) => buildRunsSortParams(nextSortKey ?? DEFAULT_RUNS_SORT_KEY, nextSortDir, current),
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const { sorted, sortKey: activeSortKey, sortDir: activeSortDir, toggleSort } = useTableSort(
+    runs,
+    sortAccessors,
+    DEFAULT_RUNS_SORT_KEY,
+    { sortKey, sortDir, onSortChange },
+  );
 
   const modalRun = useMemo(
     () => (modalRunId == null ? null : runs.find((run) => run.id === modalRunId) ?? null),
     [modalRunId, runs],
   );
+
+  const modalMatchCount = useMemo(
+    () => countMatches(modalContent, modalSearch),
+    [modalContent, modalSearch],
+  );
+
+  const modalLive =
+    modalRun != null &&
+    isActiveRun(modalRun.status) &&
+    (modalKind === "log" ||
+      (modalKind === "summary" && (!modalContent.trim() || modalContent === "(empty)")));
+
+  const modalSearchPlaceholder =
+    modalKind === "log"
+      ? "Search log…"
+      : modalKind === "prompt"
+        ? "Search prompt…"
+        : modalKind === "summary"
+          ? "Search summary…"
+          : "Search…";
 
   const load = useCallback(async () => {
     const res = await api.get<{ items: AgentRun[] }>("/runs");
@@ -112,7 +189,7 @@ export default function AgentsRunsPage() {
     setModalTitle(title);
     setModalKind(kind);
     setModalRunId(runId);
-    setLogSearch("");
+    setModalSearch("");
     setModalContent("Loading...");
     setModalOpen(true);
     try {
@@ -139,7 +216,7 @@ export default function AgentsRunsPage() {
     if (!open) {
       setModalKind(null);
       setModalRunId(null);
-      setLogSearch("");
+      setModalSearch("");
     }
   };
 
@@ -150,43 +227,43 @@ export default function AgentsRunsPage() {
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
-              <SortableTh label="ID" sortKey="id" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
+              <SortableTh label="ID" sortKey="id" activeKey={activeSortKey} direction={activeSortDir} onSort={toggleSort} />
               <SortableTh
                 label="Agent"
                 sortKey="agent_name"
-                activeKey={sortKey}
-                direction={sortDir}
+                activeKey={activeSortKey}
+                direction={activeSortDir}
                 onSort={toggleSort}
               />
-              <SortableTh label="Status" sortKey="status" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
-              <SortableTh label="Model" sortKey="model" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
-              <SortableTh label="Tokens" sortKey="tokens" activeKey={sortKey} direction={sortDir} onSort={toggleSort} />
+              <SortableTh label="Status" sortKey="status" activeKey={activeSortKey} direction={activeSortDir} onSort={toggleSort} />
+              <SortableTh label="Model" sortKey="model" activeKey={activeSortKey} direction={activeSortDir} onSort={toggleSort} />
+              <SortableTh label="Tokens" sortKey="tokens" activeKey={activeSortKey} direction={activeSortDir} onSort={toggleSort} />
               <SortableTh
                 label="Est. cost"
                 sortKey="estimated_cost_usd"
-                activeKey={sortKey}
-                direction={sortDir}
+                activeKey={activeSortKey}
+                direction={activeSortDir}
                 onSort={toggleSort}
               />
               <SortableTh
                 label="Trigger"
                 sortKey="trigger_source"
-                activeKey={sortKey}
-                direction={sortDir}
+                activeKey={activeSortKey}
+                direction={activeSortDir}
                 onSort={toggleSort}
               />
               <SortableTh
                 label="Started"
                 sortKey="started_at"
-                activeKey={sortKey}
-                direction={sortDir}
+                activeKey={activeSortKey}
+                direction={activeSortDir}
                 onSort={toggleSort}
               />
               <SortableTh
                 label="Duration"
                 sortKey="duration"
-                activeKey={sortKey}
-                direction={sortDir}
+                activeKey={activeSortKey}
+                direction={activeSortDir}
                 onSort={toggleSort}
               />
               <th className="px-4 py-2">Run folder</th>
@@ -245,30 +322,29 @@ export default function AgentsRunsPage() {
         </table>
       </div>
 
-      <Modal open={modalOpen} onOpenChange={handleModalOpenChange} title={modalTitle} size="large">
-        {modalKind === "log" ? (
-          <RunLogViewer
-            content={modalContent}
-            search={logSearch}
-            onSearchChange={setLogSearch}
-            live={modalRun != null && isActiveRun(modalRun.status)}
-          />
+      <Modal
+        open={modalOpen}
+        onOpenChange={handleModalOpenChange}
+        title={modalTitle}
+        size="large"
+        headerExtra={
+          modalKind ? (
+            <RunSearchToolbar
+              search={modalSearch}
+              onSearchChange={setModalSearch}
+              placeholder={modalSearchPlaceholder}
+              matchCount={modalMatchCount}
+              live={modalLive}
+              liveLabel={modalKind === "summary" ? "Waiting" : "Live"}
+            />
+          ) : null
+        }
+      >
+        {modalKind === "log" || modalKind === "prompt" ? (
+          <RunLogViewer content={modalContent} search={modalSearch} />
         ) : modalKind === "summary" ? (
-          <RunSummaryViewer
-            content={modalContent}
-            live={
-              modalRun != null &&
-              isActiveRun(modalRun.status) &&
-              (!modalContent.trim() || modalContent === "(empty)")
-            }
-          />
-        ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto rounded border bg-white">
-            <pre className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-slate-900">
-              {modalContent || "(empty)"}
-            </pre>
-          </div>
-        )}
+          <RunSummaryViewer content={modalContent} search={modalSearch} />
+        ) : null}
       </Modal>
     </div>
   );
