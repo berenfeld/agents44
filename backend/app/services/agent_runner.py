@@ -256,6 +256,12 @@ def build_run_summary_instructions(summary_path: str) -> str:
             "- Files created or changed (with paths)",
             "- Errors, blockers, or open questions",
             "- Recommended next steps (if any)",
+            "",
+            "Formatting (mandatory):",
+            "- Plain markdown only (headings, lists, paragraphs, fenced code blocks).",
+            "- Black text on white background — no colors.",
+            "- Do not use HTML, inline styles, colored markdown, badges, or emoji status symbols.",
+            "- Do not use colored tables or syntax that renders with background/text colors.",
         ]
     )
 

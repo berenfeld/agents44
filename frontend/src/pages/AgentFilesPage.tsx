@@ -23,8 +23,8 @@ type PathResponse = {
 const FILES_ROUTE_PREFIX = "/agents_files";
 
 const editorAutoHeight = EditorView.theme({
-  "&": { height: "auto !important" },
-  ".cm-scroller": { overflow: "visible !important", height: "auto !important" },
+  "&": { height: "auto !important", width: "100%" },
+  ".cm-scroller": { overflow: "auto !important", height: "auto !important" },
 });
 
 function parseFilesUrl(pathname: string): string {
@@ -255,7 +255,7 @@ export default function AgentFilesPage() {
     const ext = extension(selectedPath);
     const lang =
       ext === "json" ? [json()] : ext === "md" || ext === "markdown" ? [markdown()] : [];
-    return [editorAutoHeight, ...lang];
+    return [EditorView.lineWrapping, editorAutoHeight, ...lang];
   }, [selectedPath]);
 
   const reloadFolder = async () => {
@@ -312,16 +312,18 @@ export default function AgentFilesPage() {
     }
 
     return (
-      <CodeMirror
-        value={content}
-        theme={vscodeDark}
-        basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLineGutter: false }}
-        extensions={editorExtensions}
-        onChange={(value) => {
-          setContent(value);
-          setDirty(true);
-        }}
-      />
+      <div className="min-w-0 max-w-full overflow-hidden rounded border">
+        <CodeMirror
+          value={content}
+          theme={vscodeDark}
+          basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLineGutter: false }}
+          extensions={editorExtensions}
+          onChange={(value) => {
+            setContent(value);
+            setDirty(true);
+          }}
+        />
+      </div>
     );
   };
 
@@ -489,7 +491,7 @@ export default function AgentFilesPage() {
           )}
         </div>
 
-        <div className="space-y-3 rounded-lg border bg-white p-4 lg:col-span-2">
+        <div className="min-w-0 space-y-3 rounded-lg border bg-white p-4 lg:col-span-2">
           {!selectedPath ? (
             <p className="text-sm text-slate-500">Select a file to view or edit.</p>
           ) : (
