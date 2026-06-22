@@ -540,7 +540,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         duration_seconds = result.duration_seconds
         summary_path = safe_path(paths["summary_path"])
 
-        tokens_in, tokens_out, estimated_cost = parse_claude_result(stdout)
+        tokens_in, tokens_out, estimated_cost = parse_claude_result(stdout, agent.model)
 
         status = RunStatus.success
         error_message = None

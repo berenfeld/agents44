@@ -9,6 +9,7 @@ from flask import current_app
 from app.errors import ModelDiscoveryError
 from app.extensions import db
 from app.models import SystemAgent
+from app.services.params import get_param_json
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,63 @@ def _input_tokens_from_usage(usage: dict[str, Any]) -> int:
     ) + int(usage.get("cache_read_input_tokens") or 0)
 
 
+CACHE_WRITE_INPUT_MULTIPLIER = 1.25
+CACHE_READ_INPUT_MULTIPLIER = 0.1
+
+
+def estimate_cost_from_usage(model: str, usage: dict[str, Any]) -> float | None:
+    pricing_map: dict[str, Any] = get_param_json("MODEL_PRICING", {}) or {}
+    pricing = pricing_map.get(model)
+    if not pricing:
+        logger.warning("No MODEL_PRICING entry for model %s", model)
+        return None
+    input_per_m = float(pricing["input_per_million"])
+    output_per_m = float(pricing["output_per_million"])
+    tin = int(usage.get("input_tokens") or 0)
+    cc = int(usage.get("cache_creation_input_tokens") or 0)
+    cr = int(usage.get("cache_read_input_tokens") or 0)
+    tout = int(usage.get("output_tokens") or 0)
+    cost = (
+        tin * input_per_m / 1_000_000
+        + cc * input_per_m * CACHE_WRITE_INPUT_MULTIPLIER / 1_000_000
+        + cr * input_per_m * CACHE_READ_INPUT_MULTIPLIER / 1_000_000
+        + tout * output_per_m / 1_000_000
+    )
+    return round(cost, 6)
+
+
+def _sum_assistant_usages(stdout: str, model: str) -> tuple[int | None, int | None, float | None]:
+    tokens_in = 0
+    tokens_out = 0
+    cost_usd = 0.0
+    found = False
+    has_cost = False
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if data.get("type") != "assistant":
+            continue
+        usage = (data.get("message") or {}).get("usage")
+        if not isinstance(usage, dict):
+            continue
+        found = True
+        tokens_in += _input_tokens_from_usage(usage)
+        tokens_out += int(usage.get("output_tokens") or 0)
+        turn_cost = estimate_cost_from_usage(model, usage)
+        if turn_cost is not None:
+            cost_usd += turn_cost
+            has_cost = True
+
+    if not found:
+        return None, None, None
+    return tokens_in, tokens_out, round(cost_usd, 6) if has_cost else None
+
+
 def _find_claude_result(stdout: str) -> dict[str, Any] | None:
     result: dict[str, Any] | None = None
     for line in stdout.splitlines():
@@ -120,20 +178,26 @@ def _find_claude_result(stdout: str) -> dict[str, Any] | None:
     return None
 
 
-def parse_claude_result(stdout: str) -> tuple[int | None, int | None, float | None]:
-    """Return (tokens_in, tokens_out, total_cost_usd) from the CLI result envelope."""
+def parse_claude_result(stdout: str, model: str | None = None) -> tuple[int | None, int | None, float | None]:
+    """Return (tokens_in, tokens_out, total_cost_usd) from CLI stdout.
+
+    Prefer the final ``type=result`` envelope (authoritative ``total_cost_usd``).
+    For interrupted runs with no result line, sum per-turn assistant ``usage``.
+    """
     result = _find_claude_result(stdout)
-    if result is None:
-        return None, None, None
+    if result is not None:
+        usage = result.get("usage")
+        tokens_in: int | None = None
+        tokens_out: int | None = None
+        if isinstance(usage, dict):
+            tokens_in = _input_tokens_from_usage(usage)
+            output_tokens = usage.get("output_tokens")
+            tokens_out = int(output_tokens) if output_tokens is not None else None
 
-    usage = result.get("usage")
-    tokens_in: int | None = None
-    tokens_out: int | None = None
-    if isinstance(usage, dict):
-        tokens_in = _input_tokens_from_usage(usage)
-        output_tokens = usage.get("output_tokens")
-        tokens_out = int(output_tokens) if output_tokens is not None else None
+        total_cost = result.get("total_cost_usd")
+        cost_usd = round(float(total_cost), 6) if total_cost is not None else None
+        return tokens_in, tokens_out, cost_usd
 
-    total_cost = result.get("total_cost_usd")
-    cost_usd = round(float(total_cost), 6) if total_cost is not None else None
-    return tokens_in, tokens_out, cost_usd
+    if model:
+        return _sum_assistant_usages(stdout, model)
+    return None, None, None
