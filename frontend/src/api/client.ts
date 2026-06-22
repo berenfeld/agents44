@@ -73,6 +73,12 @@ export type SystemParam = {
   description: string | null;
 };
 
+export type AgentDbMeta = {
+  version: string;
+  table_count: number;
+  total_size_bytes: number;
+};
+
 export type AgentDbTable = {
   schema: string;
   name: string;

@@ -7,6 +7,13 @@ from app.services import agent_db
 agent_db_bp = Blueprint("agent_db", __name__)
 
 
+@agent_db_bp.get("/meta")
+@api_endpoint
+@login_required
+def database_meta():
+    return jsonify(agent_db.get_database_meta())
+
+
 @agent_db_bp.get("/tables")
 @api_endpoint
 @login_required

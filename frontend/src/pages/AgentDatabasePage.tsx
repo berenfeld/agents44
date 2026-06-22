@@ -4,6 +4,7 @@ import DataGrid, { SelectColumn, type Column, type RowsChangeData } from "react-
 import {
   AgentDbColumn,
   AgentDbFilterOp,
+  AgentDbMeta,
   AgentDbRow,
   AgentDbRowsQuery,
   AgentDbSchema,
@@ -69,6 +70,13 @@ const FILTER_OP_LABELS: Record<AgentDbFilterOp, string> = {
 };
 
 const NULL_FILTER_OPS = new Set<AgentDbFilterOp>(["is_null", "is_not_null"]);
+
+function formatDataSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 function defaultQueryState(): RowQueryState {
   return {
@@ -365,6 +373,7 @@ export default function AgentDatabasePage() {
     [searchParams],
   );
 
+  const [dbMeta, setDbMeta] = useState<AgentDbMeta | null>(null);
   const [tables, setTables] = useState<AgentDbTable[]>([]);
   const [schema, setSchema] = useState<AgentDbSchema | null>(null);
   const [rows, setRows] = useState<GridRow[]>([]);
@@ -396,8 +405,12 @@ export default function AgentDatabasePage() {
   );
 
   const loadTables = useCallback(async () => {
-    const res = await api.get<AgentDbTable[]>("/agent-db/tables");
-    setTables(res.data);
+    const [tablesRes, metaRes] = await Promise.all([
+      api.get<AgentDbTable[]>("/agent-db/tables"),
+      api.get<AgentDbMeta>("/agent-db/meta"),
+    ]);
+    setTables(tablesRes.data);
+    setDbMeta(metaRes.data);
   }, []);
 
   const tablesBySchema = useMemo(() => {
@@ -716,13 +729,14 @@ export default function AgentDatabasePage() {
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
         <h1 className="text-2xl font-semibold">Agent Database</h1>
-        <p className="text-sm text-slate-600">
-          Browse and edit tables across all PostgreSQL schemas (agent, department, and shared). System tables in{" "}
-          <code>public</code> (<code>system_*</code>, <code>alembic_version</code>) are hidden. Cell edits save
-          automatically.
-        </p>
+        {dbMeta ? (
+          <p className="text-xs text-slate-500">
+            PostgreSQL {dbMeta.version} · {dbMeta.table_count} {dbMeta.table_count === 1 ? "table" : "tables"} ·{" "}
+            {formatDataSize(dbMeta.total_size_bytes)}
+          </p>
+        ) : null}
       </div>
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}

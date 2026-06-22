@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import MetaData, Table, delete, func, insert, inspect, select, update
+from sqlalchemy import MetaData, Table, delete, func, insert, inspect, select, text, update
 from sqlalchemy.engine import RowMapping
 
 from app.errors import APIClientError
@@ -101,26 +101,45 @@ def _reflect_table(schema: str, table: str) -> Table:
     return Table(table, metadata, schema=schema, autoload_with=db.engine)
 
 
-def list_tables() -> list[dict]:
-    inspector = inspect(db.engine)
-    results: list[dict] = []
+def _iter_visible_tables(inspector) -> list[tuple[str, str]]:
+    tables: list[tuple[str, str]] = []
     for schema in sorted(inspector.get_schema_names()):
         if schema in SYSTEM_SCHEMAS:
             continue
         for table in sorted(inspector.get_table_names(schema=schema)):
             if schema == "public" and table in SYSTEM_TABLES:
                 continue
-            reflected = _reflect_table(schema, table)
-            count = db.session.execute(select(func.count()).select_from(reflected)).scalar_one()
-            qualified = _qualified_name(schema, table)
-            results.append(
-                {
-                    "schema": schema,
-                    "name": table,
-                    "qualified_name": qualified,
-                    "row_count": int(count),
-                }
-            )
+            tables.append((schema, table))
+    return tables
+
+
+def get_database_meta() -> dict:
+    inspector = inspect(db.engine)
+    table_count = len(_iter_visible_tables(inspector))
+    version = db.session.execute(text("SELECT current_setting('server_version')")).scalar_one()
+    total_size_bytes = db.session.execute(text("SELECT pg_database_size(current_database())")).scalar_one()
+    return {
+        "version": str(version),
+        "table_count": table_count,
+        "total_size_bytes": int(total_size_bytes),
+    }
+
+
+def list_tables() -> list[dict]:
+    inspector = inspect(db.engine)
+    results: list[dict] = []
+    for schema, table in _iter_visible_tables(inspector):
+        reflected = _reflect_table(schema, table)
+        count = db.session.execute(select(func.count()).select_from(reflected)).scalar_one()
+        qualified = _qualified_name(schema, table)
+        results.append(
+            {
+                "schema": schema,
+                "name": table,
+                "qualified_name": qualified,
+                "row_count": int(count),
+            }
+        )
     return results
 
 
