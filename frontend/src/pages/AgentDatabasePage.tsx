@@ -41,6 +41,7 @@ type RowQueryState = {
 
 const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
 const DEFAULT_ROW_LIMIT = 100;
+const GRID_ROW_HEIGHT = 35;
 const ALLOWED_FILTER_OPS = new Set<string>([
   "eq",
   "ne",
@@ -492,6 +493,11 @@ export default function AgentDatabasePage() {
     [schema, query.sortBy, query.sortDir, handleSort],
   );
 
+  const gridBlockSize = useMemo(
+    () => Math.max(GRID_ROW_HEIGHT * 2, (rows.length + 1) * GRID_ROW_HEIGHT),
+    [rows.length],
+  );
+
   const selectedFilterColumn = useMemo(
     () => schema?.columns.find((col) => col.name === draftFilter.filterColumn) ?? null,
     [schema, draftFilter.filterColumn],
@@ -900,12 +906,14 @@ export default function AgentDatabasePage() {
             </span>
           </div>
 
-          <div className="hidden overflow-hidden rounded-lg border bg-white md:block">
+          <div className="hidden rounded-lg border bg-white md:block">
             {loading ? (
               <div className="p-8 text-sm text-slate-500">Loading…</div>
             ) : schema && selectedTable ? (
               <DataGrid
-                className="rdg-light h-[28rem] text-sm"
+                className="rdg-light w-full text-sm"
+                style={{ blockSize: gridBlockSize }}
+                rowHeight={GRID_ROW_HEIGHT}
                 columns={columns}
                 rows={rows}
                 rowKeyGetter={rowKey}
