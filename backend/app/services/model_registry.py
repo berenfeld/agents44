@@ -1,6 +1,6 @@
+import json
 import logging
 import os
-import re
 from typing import Any
 
 import requests
@@ -9,7 +9,6 @@ from flask import current_app
 from app.errors import ModelDiscoveryError
 from app.extensions import db
 from app.models import SystemAgent
-from app.services.params import get_param_json
 
 logger = logging.getLogger(__name__)
 
@@ -87,28 +86,14 @@ def validate_model(model: str) -> bool:
     return model in get_supported_models()
 
 
-def compute_estimated_cost(model: str, tokens_in: int | None, tokens_out: int | None) -> float | None:
-    if tokens_in is None and tokens_out is None:
-        return None
-    pricing_map: dict[str, Any] = get_param_json("MODEL_PRICING", {}) or {}
-    pricing = pricing_map.get(model)
-    if not pricing:
-        logger.warning("No MODEL_PRICING entry for model %s", model)
-        return None
-    tin = tokens_in or 0
-    tout = tokens_out or 0
-    cost = (tin * float(pricing["input_per_million"]) / 1_000_000) + (
-        tout * float(pricing["output_per_million"]) / 1_000_000
-    )
-    return round(cost, 6)
+def _input_tokens_from_usage(usage: dict[str, Any]) -> int:
+    return int(usage.get("input_tokens") or 0) + int(
+        usage.get("cache_creation_input_tokens") or 0
+    ) + int(usage.get("cache_read_input_tokens") or 0)
 
 
-def parse_usage_from_claude_output(stdout: str) -> tuple[int | None, int | None]:
-    import json
-
-    tokens_in: int | None = None
-    tokens_out: int | None = None
-
+def _find_claude_result(stdout: str) -> dict[str, Any] | None:
+    result: dict[str, Any] | None = None
     for line in stdout.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -117,33 +102,38 @@ def parse_usage_from_claude_output(stdout: str) -> tuple[int | None, int | None]
             data = json.loads(stripped)
         except json.JSONDecodeError:
             continue
-        usage = data.get("usage")
-        if isinstance(usage, dict):
-            tin = usage.get("input_tokens") or usage.get("prompt_tokens")
-            tout = usage.get("output_tokens") or usage.get("completion_tokens")
-            if tin is not None:
-                tokens_in = int(tin)
-            if tout is not None:
-                tokens_out = int(tout)
+        if data.get("type") == "result":
+            result = data
 
-    if tokens_in is not None or tokens_out is not None:
-        return tokens_in, tokens_out
+    if result is not None:
+        return result
 
-    if stdout.strip().startswith("{"):
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError:
-            data = None
-        if data is not None:
-            usage = data.get("usage") or data.get("result", {}).get("usage") or {}
-            tokens_in = usage.get("input_tokens") or usage.get("prompt_tokens")
-            tokens_out = usage.get("output_tokens") or usage.get("completion_tokens")
-            return (
-                int(tokens_in) if tokens_in is not None else None,
-                int(tokens_out) if tokens_out is not None else None,
-            )
+    stripped_stdout = stdout.strip()
+    if not stripped_stdout.startswith("{"):
+        return None
+    try:
+        data = json.loads(stripped_stdout)
+    except json.JSONDecodeError:
+        return None
+    if data.get("type") == "result":
+        return data
+    return None
 
-    match = re.search(r'"input_tokens"\s*:\s*(\d+).*"output_tokens"\s*:\s*(\d+)', stdout)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    return None, None
+
+def parse_claude_result(stdout: str) -> tuple[int | None, int | None, float | None]:
+    """Return (tokens_in, tokens_out, total_cost_usd) from the CLI result envelope."""
+    result = _find_claude_result(stdout)
+    if result is None:
+        return None, None, None
+
+    usage = result.get("usage")
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    if isinstance(usage, dict):
+        tokens_in = _input_tokens_from_usage(usage)
+        output_tokens = usage.get("output_tokens")
+        tokens_out = int(output_tokens) if output_tokens is not None else None
+
+    total_cost = result.get("total_cost_usd")
+    cost_usd = round(float(total_cost), 6) if total_cost is not None else None
+    return tokens_in, tokens_out, cost_usd

@@ -18,7 +18,7 @@ from app.errors import APIClientError
 from app.extensions import db
 from app.models import RunStatus, SystemAgent, SystemAgentRun, TriggerSource
 from app.services.email import maybe_notify_run
-from app.services.model_registry import compute_estimated_cost, parse_usage_from_claude_output
+from app.services.model_registry import parse_claude_result
 from app.services.params import (
     get_claude_cli_extra_args,
     get_timeout_sigkill_grace_seconds,
@@ -540,8 +540,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         duration_seconds = result.duration_seconds
         summary_path = safe_path(paths["summary_path"])
 
-        tokens_in, tokens_out = parse_usage_from_claude_output(stdout)
-        estimated_cost = compute_estimated_cost(agent.model, tokens_in, tokens_out)
+        tokens_in, tokens_out, estimated_cost = parse_claude_result(stdout)
 
         status = RunStatus.success
         error_message = None
