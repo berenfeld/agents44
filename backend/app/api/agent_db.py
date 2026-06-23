@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 
 from app.auth import login_required
-from app.errors import api_endpoint
+from app.errors import APIClientError, api_endpoint
 from app.services import agent_db
 
 agent_db_bp = Blueprint("agent_db", __name__)
@@ -19,6 +19,24 @@ def database_meta():
 @login_required
 def list_tables():
     return jsonify(agent_db.list_tables())
+
+
+@agent_db_bp.delete("/tables/<path:table_name>")
+@api_endpoint
+@login_required
+def drop_table(table_name: str):
+    return jsonify(agent_db.drop_table(table_name))
+
+
+@agent_db_bp.patch("/tables/<path:table_name>")
+@api_endpoint
+@login_required
+def rename_table(table_name: str):
+    payload = request.get_json(force=True) or {}
+    new_name = payload.get("name")
+    if not isinstance(new_name, str) or not new_name.strip():
+        raise APIClientError("name is required", 400)
+    return jsonify(agent_db.rename_table(table_name, new_name))
 
 
 @agent_db_bp.get("/tables/<path:table_name>/schema")

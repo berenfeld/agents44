@@ -445,3 +445,37 @@ def delete_row(table_name: str, keys: dict) -> dict:
     if result.rowcount == 0:
         raise APIClientError("Row not found", 404)
     return {"deleted": True, "keys": keys}
+
+
+def _quote_ident(*parts: str) -> str:
+    preparer = db.engine.dialect.identifier_preparer
+    return ".".join(preparer.quote(part) for part in parts)
+
+
+def drop_table(table_name: str) -> dict:
+    schema, table = _parse_qualified_table(table_name)
+    qualified = _qualified_name(schema, table)
+    db.session.execute(text(f"DROP TABLE {_quote_ident(schema, table)}"))
+    db.session.commit()
+    return {"dropped": True, "qualified_name": qualified}
+
+
+def rename_table(table_name: str, new_name: str) -> dict:
+    schema, table = _parse_qualified_table(table_name)
+    new_table = _validate_identifier(new_name, label="table name")
+    if schema == "public" and new_table in SYSTEM_TABLES:
+        raise APIClientError("Table not allowed", 403)
+    inspector = inspect(db.engine)
+    existing = inspector.get_table_names(schema=schema)
+    if new_table in existing and new_table != table:
+        raise APIClientError("A table with that name already exists", 409)
+    if new_table != table:
+        db.session.execute(
+            text(f"ALTER TABLE {_quote_ident(schema, table)} RENAME TO {db.engine.dialect.identifier_preparer.quote(new_table)}")
+        )
+        db.session.commit()
+    return {
+        "schema": schema,
+        "name": new_table,
+        "qualified_name": _qualified_name(schema, new_table),
+    }

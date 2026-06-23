@@ -11,8 +11,8 @@ import {
   AgentDbTable,
   api,
 } from "@/api/client";
-import { ConfirmModal } from "@/components/ui/modal";
-import { Input } from "@/components/ui/primitives";
+import { ConfirmModal, Modal } from "@/components/ui/modal";
+import { Button, Input } from "@/components/ui/primitives";
 import {
   DataCard,
   DataCardField,
@@ -320,10 +320,18 @@ function RefreshIcon() {
   );
 }
 
-function TrashIcon() {
+function TrashIcon({ className }: { className?: string }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
       <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -408,6 +416,19 @@ function writeVisibleColumns(tableName: string, visibleColumns: ReadonlySet<stri
   }
 }
 
+function migrateVisibleColumns(oldName: string, newName: string) {
+  try {
+    const key = `${COLUMN_VISIBILITY_PREFIX}${oldName}`;
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      localStorage.setItem(`${COLUMN_VISIBILITY_PREFIX}${newName}`, raw);
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 function ToolbarDivider({ className }: { className?: string }) {
   return <span className={cn("mx-0.5 h-5 w-px shrink-0 bg-slate-200", className)} aria-hidden="true" />;
 }
@@ -429,6 +450,9 @@ export default function AgentDatabasePage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRows, setSelectedRows] = useState<ReadonlySet<string>>(() => new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [tableToDrop, setTableToDrop] = useState<AgentDbTable | null>(null);
+  const [tableToRename, setTableToRename] = useState<AgentDbTable | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [draftFilter, setDraftFilter] = useState({
     filterColumn: query.filterColumn,
     filterOp: query.filterOp,
@@ -532,11 +556,11 @@ export default function AgentDatabasePage() {
   }, [selectedTable, query, loadTableData]);
 
   useEffect(() => {
-    if (!schema || !selectedTable) {
-      setVisibleColumns(new Set());
+    if (!schema || !selectedTable || schema.qualified_name !== selectedTable) {
       return;
     }
-    setVisibleColumns(readVisibleColumns(selectedTable, schema.columns.map((col) => col.name)));
+    const columnNames = schema.columns.map((col) => col.name);
+    setVisibleColumns(readVisibleColumns(selectedTable, columnNames));
   }, [schema, selectedTable]);
 
   const handleVisibleColumnsChange = useCallback(
@@ -735,6 +759,56 @@ export default function AgentDatabasePage() {
     }
   };
 
+  const dropTable = async () => {
+    if (!tableToDrop) return;
+    const droppedName = tableToDrop.qualified_name;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.delete(tableApiPath(droppedName));
+      const remaining = tables.filter((table) => table.qualified_name !== droppedName);
+      await loadTables();
+      if (selectedTable === droppedName) {
+        setTableAndQuery(remaining[0]?.qualified_name ?? null, defaultQueryState());
+      }
+      setTableToDrop(null);
+    } catch (err) {
+      setError(axiosErrorMessage(err) ?? "Failed to drop table");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const renameTable = async () => {
+    if (!tableToRename) return;
+    const trimmed = renameDraft.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.patch<{ qualified_name: string; name: string }>(
+        tableApiPath(tableToRename.qualified_name),
+        { name: trimmed },
+      );
+      migrateVisibleColumns(tableToRename.qualified_name, res.data.qualified_name);
+      await loadTables();
+      if (selectedTable === tableToRename.qualified_name) {
+        setTableAndQuery(res.data.qualified_name, query);
+      }
+      setTableToRename(null);
+      setRenameDraft("");
+    } catch (err) {
+      setError(axiosErrorMessage(err) ?? "Failed to rename table");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openRenameTable = (table: AgentDbTable) => {
+    setTableToRename(table);
+    setRenameDraft(table.name);
+  };
+
   const deleteCount = rows.filter((row) => selectedRows.has(row._rowId) && !row._isNew).length;
   const rangeStart = total === 0 ? 0 : query.offset + 1;
   const rangeEnd = total === 0 ? 0 : Math.min(query.offset + rows.length, total);
@@ -801,28 +875,65 @@ export default function AgentDatabasePage() {
               {schemaName}
             </h3>
             <ul className="space-y-1">
-              {schemaTables.map((table) => (
-                <li key={table.qualified_name}>
-                  <button
-                    type="button"
-                    onClick={() => setTableAndQuery(table.qualified_name, defaultQueryState())}
-                    className={`w-full rounded-md px-2 py-1.5 text-left text-sm ${
-                      selectedTable === table.qualified_name
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    <span className="font-medium">{table.name}</span>
-                    <span
-                      className={`ml-1 text-xs ${
-                        selectedTable === table.qualified_name ? "text-slate-300" : "text-slate-500"
-                      }`}
+              {schemaTables.map((table) => {
+                const isSelected = selectedTable === table.qualified_name;
+                return (
+                  <li key={table.qualified_name}>
+                    <div
+                      className={cn(
+                        "flex items-center gap-0.5 rounded-md",
+                        isSelected ? "bg-slate-900" : "hover:bg-slate-100",
+                      )}
                     >
-                      ({table.row_count})
-                    </span>
-                  </button>
-                </li>
-              ))}
+                      <button
+                        type="button"
+                        onClick={() => setTableAndQuery(table.qualified_name, defaultQueryState())}
+                        className={cn(
+                          "min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-sm",
+                          isSelected ? "text-white" : "text-slate-700",
+                        )}
+                      >
+                        <span className="font-medium">{table.name}</span>
+                        <span className={cn("ml-1 text-xs", isSelected ? "text-slate-300" : "text-slate-500")}>
+                          ({table.row_count})
+                        </span>
+                      </button>
+                      <div className="flex shrink-0 items-center gap-0.5 pr-1">
+                        <button
+                          type="button"
+                          title={`Rename ${table.qualified_name}`}
+                          aria-label={`Rename ${table.qualified_name}`}
+                          disabled={busy}
+                          onClick={() => openRenameTable(table)}
+                          className={cn(
+                            "inline-flex h-6 w-6 items-center justify-center rounded disabled:opacity-40",
+                            isSelected
+                              ? "text-slate-300 hover:bg-slate-800 hover:text-white"
+                              : "text-slate-400 hover:bg-slate-200 hover:text-slate-700",
+                          )}
+                        >
+                          <PencilIcon className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          title={`Drop ${table.qualified_name}`}
+                          aria-label={`Drop ${table.qualified_name}`}
+                          disabled={busy}
+                          onClick={() => setTableToDrop(table)}
+                          className={cn(
+                            "inline-flex h-6 w-6 items-center justify-center rounded disabled:opacity-40",
+                            isSelected
+                              ? "text-slate-300 hover:bg-red-900/60 hover:text-red-200"
+                              : "text-slate-400 hover:bg-red-50 hover:text-red-600",
+                          )}
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}
@@ -1147,6 +1258,76 @@ export default function AgentDatabasePage() {
           deleteSelected().catch(console.error);
         }}
       />
+
+      <ConfirmModal
+        open={!!tableToDrop}
+        onOpenChange={(open) => !open && setTableToDrop(null)}
+        title="Drop table?"
+        confirmLabel="Drop table"
+        destructive
+        description={
+          tableToDrop ? (
+            <p>
+              Permanently drop table <strong>{tableToDrop.qualified_name}</strong> and all of its data? This cannot be
+              undone.
+            </p>
+          ) : null
+        }
+        onConfirm={() => {
+          dropTable().catch(console.error);
+        }}
+      />
+
+      <Modal
+        open={!!tableToRename}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTableToRename(null);
+            setRenameDraft("");
+          }
+        }}
+        title="Rename table"
+      >
+        {tableToRename ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Rename <strong>{tableToRename.qualified_name}</strong> to a new table name within the{" "}
+              <strong>{tableToRename.schema}</strong> schema.
+            </p>
+            <div>
+              <label htmlFor="rename-table-input" className="mb-1 block text-sm font-medium text-slate-700">
+                New name
+              </label>
+              <Input
+                id="rename-table-input"
+                value={renameDraft}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                placeholder="table_name"
+                autoFocus
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && renameDraft.trim()) {
+                    renameTable().catch(console.error);
+                  }
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setTableToRename(null);
+                  setRenameDraft("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button disabled={!renameDraft.trim() || busy} onClick={() => renameTable().catch(console.error)}>
+                Rename
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
