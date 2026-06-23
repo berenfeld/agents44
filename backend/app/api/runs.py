@@ -90,3 +90,13 @@ def get_run_summary(run_id: int):
     if not summary_file.exists():
         return jsonify({"summary": ""})
     return jsonify({"summary": summary_file.read_text(encoding="utf-8")})
+
+
+@runs_bp.post("/<int:run_id>/stop")
+@api_endpoint
+@login_required
+def stop_run_endpoint(run_id: int):
+    from app.services.agent_runner import stop_run
+
+    run = stop_run(run_id)
+    return jsonify(run.to_dict())

@@ -5,11 +5,12 @@ import { RunLogViewer } from "@/components/agents/RunLogViewer";
 import { RunSearchToolbar } from "@/components/agents/RunSearchToolbar";
 import { RunStatusBadge } from "@/components/agents/RunStatusBadge";
 import { RunSummaryViewer } from "@/components/agents/RunSummaryViewer";
+import { StopRunButton } from "@/components/agents/StopRunButton";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { cn, formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
 import { countMatches } from "@/lib/search-highlight";
-import { Modal } from "@/components/ui/modal";
+import { ConfirmModal, Modal } from "@/components/ui/modal";
 import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
 import {
   DataCard,
@@ -27,6 +28,10 @@ function filesUrl(path: string) {
 
 function isActiveRun(status: string) {
   return status === "running" || status === "pending";
+}
+
+function isRunningRun(status: string) {
+  return status === "running";
 }
 
 const RUNS_SORT_KEYS = new Set([
@@ -110,6 +115,8 @@ export default function AgentsRunsPage() {
   const [modalRunId, setModalRunId] = useState<number | null>(null);
   const [modalSearch, setModalSearch] = useState("");
   const [logAutoScroll, setLogAutoScroll] = useState(true);
+  const [stopRun, setStopRun] = useState<AgentRun | null>(null);
+  const [stoppingRunId, setStoppingRunId] = useState<number | null>(null);
 
   const sortAccessors = useMemo(
     () => ({
@@ -281,6 +288,20 @@ export default function AgentsRunsPage() {
     }
   };
 
+  const confirmStopRun = async () => {
+    if (!stopRun) return;
+    setStoppingRunId(stopRun.id);
+    try {
+      await api.post(`/runs/${stopRun.id}/stop`);
+      setStopRun(null);
+      await load();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setStoppingRunId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
@@ -381,7 +402,15 @@ export default function AgentsRunsPage() {
                 <td className="px-4 py-2">{run.id}</td>
                 <td className="px-4 py-2">{run.agent_name || run.agent_id}</td>
                 <td className="px-4 py-2">
-                  <RunStatusBadge status={run.status} />
+                  <span className="inline-flex items-center gap-1">
+                    <RunStatusBadge status={run.status} />
+                    {isRunningRun(run.status) ? (
+                      <StopRunButton
+                        onClick={() => setStopRun(run)}
+                        disabled={stoppingRunId === run.id}
+                      />
+                    ) : null}
+                  </span>
                 </td>
                 <td className="px-4 py-2">{run.model || "-"}</td>
                 <td className="px-4 py-2 tabular-nums">{formatTokens(run.tokens_in, run.tokens_out)}</td>
@@ -433,7 +462,15 @@ export default function AgentsRunsPage() {
             </DataCardTitle>
             <dl>
               <DataCardField label="Status">
-                <RunStatusBadge status={run.status} />
+                <span className="inline-flex items-center gap-1">
+                  <RunStatusBadge status={run.status} />
+                  {isRunningRun(run.status) ? (
+                    <StopRunButton
+                      onClick={() => setStopRun(run)}
+                      disabled={stoppingRunId === run.id}
+                    />
+                  ) : null}
+                </span>
               </DataCardField>
               <DataCardField label="Model">{run.model || "-"}</DataCardField>
               <DataCardField label="Tokens">
@@ -506,6 +543,23 @@ export default function AgentsRunsPage() {
           <RunSummaryViewer content={modalContent} search={modalSearch} />
         ) : null}
       </Modal>
+
+      <ConfirmModal
+        open={!!stopRun}
+        onOpenChange={(open) => !open && setStopRun(null)}
+        title="Stop run?"
+        confirmLabel="Stop"
+        destructive
+        description={
+          stopRun ? (
+            <p>
+              Send SIGTERM to run <strong>#{stopRun.id}</strong> ({stopRun.agent_name || stopRun.agent_id})? The
+              agent may finish gracefully if it writes <code>summary.md</code>, or the run may fail.
+            </p>
+          ) : null
+        }
+        onConfirm={confirmStopRun}
+      />
     </div>
   );
 }

@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 _run_lock = threading.Lock()
 _run_queue: queue.Queue = queue.Queue()
 _worker_started = False
+_active_procs: dict[int, subprocess.Popen] = {}
+_active_procs_lock = threading.Lock()
+_manual_stop_requested: set[int] = set()
+_manual_stop_lock = threading.Lock()
 
 RUN_FAILED_MESSAGE = "Agent run failed"
 LOG_STDERR_MAX = 4000
@@ -74,6 +78,29 @@ def _signal_process_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
         os.killpg(proc.pid, sig)
     except ProcessLookupError:
         pass
+
+
+def _register_active_proc(run_id: int, proc: subprocess.Popen) -> None:
+    with _active_procs_lock:
+        _active_procs[run_id] = proc
+
+
+def _unregister_active_proc(run_id: int) -> None:
+    with _active_procs_lock:
+        _active_procs.pop(run_id, None)
+
+
+def _get_active_proc(run_id: int) -> subprocess.Popen | None:
+    with _active_procs_lock:
+        return _active_procs.get(run_id)
+
+
+def _consume_manual_stop_request(run_id: int) -> bool:
+    with _manual_stop_lock:
+        if run_id in _manual_stop_requested:
+            _manual_stop_requested.discard(run_id)
+            return True
+        return False
 
 
 def _truncate_text(text: str, max_chars: int = LOG_STDERR_MAX) -> str:
@@ -235,6 +262,7 @@ def _write_run_log_finish(
 
 
 def _run_claude_subprocess(
+    run_id: int,
     log_path: Path,
     cmd: list[str],
     *,
@@ -260,60 +288,64 @@ def _run_claude_subprocess(
             env=env,
             start_new_session=True,
         )
+        _register_active_proc(run_id, proc)
 
-        def read_stdout() -> None:
-            if not proc.stdout:
-                return
-            for line in proc.stdout:
-                stdout_parts.append(line)
-                log_file.write(line)
-                log_file.flush()
+        try:
+            def read_stdout() -> None:
+                if not proc.stdout:
+                    return
+                for line in proc.stdout:
+                    stdout_parts.append(line)
+                    log_file.write(line)
+                    log_file.flush()
 
-        def read_stderr() -> None:
-            if not proc.stderr:
-                return
-            for line in proc.stderr:
-                stderr_parts.append(line)
+            def read_stderr() -> None:
+                if not proc.stderr:
+                    return
+                for line in proc.stderr:
+                    stderr_parts.append(line)
 
-        stdout_thread = threading.Thread(target=read_stdout, daemon=True, name="agent-run-stdout")
-        stderr_thread = threading.Thread(target=read_stderr, daemon=True, name="agent-run-stderr")
-        stdout_thread.start()
-        stderr_thread.start()
+            stdout_thread = threading.Thread(target=read_stdout, daemon=True, name="agent-run-stdout")
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True, name="agent-run-stderr")
+            stdout_thread.start()
+            stderr_thread.start()
 
-        started = time.monotonic()
-        sigterm_sent = False
-        sigkill_sent = False
-        sigterm_at = timeout_seconds + sigterm_grace_seconds
-        sigkill_at = timeout_seconds + sigkill_grace_seconds
+            started = time.monotonic()
+            sigterm_sent = False
+            sigkill_sent = False
+            sigterm_at = timeout_seconds + sigterm_grace_seconds
+            sigkill_at = timeout_seconds + sigkill_grace_seconds
 
-        while proc.poll() is None:
-            elapsed = time.monotonic() - started
-            if elapsed >= sigkill_at:
-                log_file.write(
-                    f"\n=== TIMEOUT ENFORCEMENT ===\n"
-                    f"SIGKILL sent at {elapsed:.1f}s "
-                    f"(configured timeout {timeout_seconds}s + {sigkill_grace_seconds}s)\n"
-                )
-                log_file.flush()
-                _signal_process_group(proc, signal.SIGKILL)
-                sigkill_sent = True
-                break
-            if elapsed >= sigterm_at and not sigterm_sent:
-                log_file.write(
-                    f"\n=== TIMEOUT ENFORCEMENT ===\n"
-                    f"SIGTERM sent at {elapsed:.1f}s "
-                    f"(configured timeout {timeout_seconds}s + {sigterm_grace_seconds}s)\n"
-                )
-                log_file.flush()
-                _signal_process_group(proc, signal.SIGTERM)
-                sigterm_sent = True
-            time.sleep(0.5)
+            while proc.poll() is None:
+                elapsed = time.monotonic() - started
+                if elapsed >= sigkill_at:
+                    log_file.write(
+                        f"\n=== TIMEOUT ENFORCEMENT ===\n"
+                        f"SIGKILL sent at {elapsed:.1f}s "
+                        f"(configured timeout {timeout_seconds}s + {sigkill_grace_seconds}s)\n"
+                    )
+                    log_file.flush()
+                    _signal_process_group(proc, signal.SIGKILL)
+                    sigkill_sent = True
+                    break
+                if elapsed >= sigterm_at and not sigterm_sent:
+                    log_file.write(
+                        f"\n=== TIMEOUT ENFORCEMENT ===\n"
+                        f"SIGTERM sent at {elapsed:.1f}s "
+                        f"(configured timeout {timeout_seconds}s + {sigterm_grace_seconds}s)\n"
+                    )
+                    log_file.flush()
+                    _signal_process_group(proc, signal.SIGTERM)
+                    sigterm_sent = True
+                time.sleep(0.5)
 
-        returncode = proc.wait()
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
+            returncode = proc.wait()
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
 
-        duration_seconds = time.monotonic() - started
+            duration_seconds = time.monotonic() - started
+        finally:
+            _unregister_active_proc(run_id)
 
     return ClaudeSubprocessResult(
         returncode=returncode,
@@ -526,6 +558,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         _write_run_log_start(log_path, start_context)
         _log_run_start(start_context)
         result = _run_claude_subprocess(
+            run.id,
             log_path,
             cmd,
             cwd=cwd,
@@ -539,6 +572,8 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         returncode = result.returncode
         duration_seconds = result.duration_seconds
         summary_path = safe_path(paths["summary_path"])
+        manual_stop = _consume_manual_stop_request(run.id)
+        sigterm_sent = result.sigterm_sent or manual_stop
 
         tokens_in, tokens_out, estimated_cost = parse_claude_result(stdout, agent.model)
 
@@ -553,22 +588,30 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                 timeout_seconds,
                 sigterm_grace_seconds=sigterm_grace_seconds,
                 sigkill_grace_seconds=sigkill_grace_seconds,
-                sigterm_sent=result.sigterm_sent,
+                sigterm_sent=sigterm_sent,
                 sigkill_sent=True,
             )
-        elif result.sigterm_sent:
+        elif sigterm_sent:
+            if manual_stop:
+                exit_note = "SIGTERM sent by user"
             if _summary_written(summary_path):
-                exit_note = (
-                    f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
-                    "summary.md written after SIGTERM"
-                )
+                if manual_stop:
+                    exit_note = f"{exit_note}; summary.md written after SIGTERM"
+                else:
+                    exit_note = (
+                        f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                        "summary.md written after SIGTERM"
+                    )
             else:
                 status = RunStatus.failed
                 error_message = RUN_FAILED_MESSAGE
-                exit_note = (
-                    f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
-                    "summary.md missing"
-                )
+                if manual_stop:
+                    exit_note = f"{exit_note}; summary.md missing"
+                else:
+                    exit_note = (
+                        f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                        "summary.md missing"
+                    )
         elif returncode != 0:
             status = RunStatus.failed
             error_message = RUN_FAILED_MESSAGE
@@ -701,4 +744,40 @@ def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None)
         ),
     )
     _run_queue.put({"run_id": run.id, "payload": payload})
+    return run
+
+
+def stop_run(run_id: int) -> SystemAgentRun:
+    run = db.session.get(SystemAgentRun, run_id)
+    if not run:
+        raise APIClientError("Run not found", 404)
+    if run.status != RunStatus.running:
+        raise APIClientError("Run is not running", 400)
+
+    proc = _get_active_proc(run_id)
+    if proc is None:
+        raise APIClientError("Run process is not active", 409)
+
+    with _manual_stop_lock:
+        _manual_stop_requested.add(run_id)
+
+    if run.log_path:
+        log_path = safe_path(run.log_path)
+        if log_path.exists():
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write("\n=== MANUAL STOP ===\nSIGTERM sent by user\n")
+                log_file.flush()
+
+    _signal_process_group(proc, signal.SIGTERM)
+    logger.info(
+        "AGENT_RUN_STOP %s",
+        json.dumps(
+            {
+                "run_id": run.id,
+                "agent_id": run.agent_id,
+                "pid": proc.pid,
+            },
+            default=str,
+        ),
+    )
     return run
