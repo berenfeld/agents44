@@ -1,4 +1,4 @@
-import { useAppHealth } from "@/components/app-health-provider";
+import { useAppHealth } from "@/hooks/useAppHealth";
 
 export function AppFooter() {
   const { version, serverTimeUtc } = useAppHealth();

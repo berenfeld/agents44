@@ -1,26 +1,11 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { ConfirmModal } from "@/components/ui/modal";
+import { AppHealthContext, type HealthResponse } from "@/hooks/useAppHealth";
 import { appVersion } from "@/lib/version";
 
 const VERSION_CACHE_KEY = "agents44:server-version";
 const HEALTH_POLL_MS = 60_000;
-
-export type HealthResponse = {
-  ok: boolean;
-  version: string;
-  utc: string;
-};
-
-type AppHealthContextValue = {
-  version: string | null;
-  serverTimeUtc: string | null;
-};
-
-const AppHealthContext = createContext<AppHealthContextValue>({
-  version: null,
-  serverTimeUtc: null,
-});
 
 function formatUtc(date: Date): string {
   return (
@@ -64,8 +49,6 @@ export function AppHealthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let offsetMs = 0;
-    let tickTimer: ReturnType<typeof setInterval> | undefined;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
 
     const syncHealth = async () => {
       try {
@@ -88,21 +71,18 @@ export function AppHealthProvider({ children }: { children: React.ReactNode }) {
     };
 
     void syncHealth();
-    pollTimer = setInterval(() => {
+
+    const pollTimer = setInterval(() => {
       void syncHealth();
     }, HEALTH_POLL_MS);
 
-    tickTimer = setInterval(() => {
+    const tickTimer = setInterval(() => {
       setServerTimeUtc(formatUtc(new Date(Date.now() + offsetMs)));
     }, 1000);
 
     return () => {
-      if (tickTimer) {
-        clearInterval(tickTimer);
-      }
-      if (pollTimer) {
-        clearInterval(pollTimer);
-      }
+      clearInterval(tickTimer);
+      clearInterval(pollTimer);
     };
   }, []);
 
@@ -132,8 +112,4 @@ export function AppHealthProvider({ children }: { children: React.ReactNode }) {
       />
     </AppHealthContext.Provider>
   );
-}
-
-export function useAppHealth() {
-  return useContext(AppHealthContext);
 }
