@@ -60,7 +60,7 @@ export function InlineCrondInput({
         <Input
           className={cn("min-w-[10rem]", error && "border-red-500 focus-visible:ring-red-500")}
           value={value}
-          placeholder="0 9 * * *"
+          placeholder="Not Scheduled"
           aria-invalid={!!error}
           onChange={(e) => onChange(e.target.value)}
           onBlur={tryCommit}

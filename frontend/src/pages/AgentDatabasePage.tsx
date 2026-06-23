@@ -192,21 +192,6 @@ function stripInternal(row: GridRow): AgentDbRow {
   );
 }
 
-function emptyRow(schema: AgentDbSchema): GridRow {
-  const row: GridRow = { _rowId: crypto.randomUUID(), _isNew: true };
-  for (const col of schema.columns) {
-    if (col.primary_key && col.autoincrement) {
-      continue;
-    }
-    if (col.default != null) {
-      row[col.name] = col.default;
-      continue;
-    }
-    row[col.name] = col.type === "boolean" ? false : null;
-  }
-  return row;
-}
-
 function toGridRows(items: AgentDbRow[], schema: AgentDbSchema): GridRow[] {
   return items.map((item) => ({
     ...item,
@@ -323,14 +308,6 @@ function ToolbarIconButton({
     >
       {children}
     </button>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
-      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -735,11 +712,6 @@ export default function AgentDatabasePage() {
     }
   };
 
-  const addRow = () => {
-    if (!schema) return;
-    setRows((current) => [emptyRow(schema), ...current]);
-  };
-
   const deleteSelected = async () => {
     if (!schema || !selectedTable) return;
     setBusy(true);
@@ -913,9 +885,6 @@ export default function AgentDatabasePage() {
                   <PanelLeftIcon />
                 </ToolbarIconButton>
               ) : null}
-              <ToolbarIconButton title="Add row" onClick={addRow} disabled={!schema || busy}>
-                <PlusIcon />
-              </ToolbarIconButton>
               <ToolbarIconButton
                 title="Refresh"
                 variant="outline"
@@ -1158,7 +1127,7 @@ export default function AgentDatabasePage() {
           {schema ? (
             <p className="text-xs text-slate-500">
               Primary keys: {schema.primary_keys.join(", ") || "(none)"}. Double-click a cell to edit on desktop; on
-              mobile, edit fields directly in each card. New rows insert after you fill required fields.
+              mobile, edit fields directly in each card.
             </p>
           ) : null}
       </SplitPanelLayout>
