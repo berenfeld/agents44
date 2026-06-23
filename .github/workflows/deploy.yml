@@ -34,6 +34,9 @@ jobs:
         id: version
         run: echo "value=$(bash scripts/git-version.sh)" >> "$GITHUB_OUTPUT"
 
+      - name: Write app version for deploy
+        run: echo "${{ steps.version.outputs.value }}" > deploy/VERSION
+
       - name: Build frontend
         run: npm run build
         working-directory: frontend
@@ -141,6 +144,17 @@ jobs:
             sudo mkdir -p ${{ env.APP_DIR }}/backend
             sudo unzip -oq ${{ env.DEPLOY_DIR }}/dist/backend.zip -d ${{ env.APP_DIR }}/backend
             sudo chown -R agents44:agents44 ${{ env.APP_DIR }}/backend
+
+      - name: Update app version on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            VERSION="$(cat ${{ env.DEPLOY_DIR }}/deploy/VERSION)"
+            sudo bash ${{ env.APP_DIR }}/deploy/scripts/set-env-var.sh ${{ env.APP_DIR }}/.env REACT_APP_VERSION "$VERSION"
 
       - name: Start backend
         uses: appleboy/ssh-action@v1.2.0

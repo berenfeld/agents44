@@ -12,6 +12,8 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Created $ENV_FILE from .env.example"
 fi
 
+bash "$ROOT/deploy/scripts/set-env-var.sh" "$ENV_FILE" REACT_APP_VERSION "$(bash "$ROOT/scripts/git-version.sh")"
+
 set -a
 # shellcheck disable=SC1091
 source "$ENV_FILE"
@@ -92,8 +94,6 @@ fi
 if [ ! -d frontend/node_modules ]; then
   (cd frontend && npm install)
 fi
-
-export REACT_APP_VERSION="$(bash "$ROOT/scripts/git-version.sh")"
 
 if [ -f .dev/frontend.pid ] && kill -0 "$(cat .dev/frontend.pid)" 2>/dev/null; then
   echo "Frontend already running"

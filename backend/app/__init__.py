@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -20,6 +21,7 @@ from app.services.model_registry import init_model_registry
 from app.services.params import seed_system_params
 from app.services.scheduler import init_scheduler
 from app.services.workspace import ensure_workspace_layout
+from app.version import app_version
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,13 @@ def create_app() -> Flask:
     @app.get("/api/health")
     @api_endpoint
     def health():
-        return jsonify({"ok": True})
+        return jsonify(
+            {
+                "ok": True,
+                "version": app_version(),
+                "utc": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     @app.get("/api/docs")
     @api_endpoint
