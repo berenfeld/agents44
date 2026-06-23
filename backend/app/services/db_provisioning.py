@@ -96,17 +96,13 @@ def _reassign_schema_objects(conn: Connection, schema: str, new_owner: str) -> N
         DO $reassign$ DECLARE item record;
         BEGIN
           FOR item IN
-            SELECT c.relkind, c.relname
+            SELECT c.relname
             FROM pg_class c
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = '{schema}'
-              AND c.relkind IN ('r', 'v', 'm', 'S', 'f', 'p')
+              AND c.relkind IN ('r', 'v', 'm', 'f', 'p')
           LOOP
-            IF item.relkind = 'S' THEN
-              EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO %I', '{schema}', item.relname, '{new_owner}');
-            ELSE
-              EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '{schema}', item.relname, '{new_owner}');
-            END IF;
+            EXECUTE format('ALTER TABLE %I.%I OWNER TO %I', '{schema}', item.relname, '{new_owner}');
           END LOOP;
         END $reassign$;
         """,
