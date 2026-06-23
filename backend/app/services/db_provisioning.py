@@ -144,11 +144,44 @@ def _grant_read_schema(conn: Connection, app_role: str, agent_role: str, schema:
     )
 
 
+def _lock_down_public_schema(conn: Connection, app_role: str) -> None:
+    """Restrict public schema to the app role; revoke world-readable defaults."""
+    app_sql = quote_ident(app_role)
+    _execute(conn, "REVOKE ALL ON SCHEMA public FROM PUBLIC")
+    _execute(conn, "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC")
+    _execute(conn, "REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC")
+    _execute(conn, "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC")
+    _execute(conn, f"GRANT USAGE, CREATE ON SCHEMA public TO {app_sql}")
+    _execute(conn, f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {app_sql}")
+    _execute(conn, f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {app_sql}")
+    _execute(conn, f"GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO {app_sql}")
+    _execute(
+        conn,
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+        f"GRANT ALL ON TABLES TO {app_sql}",
+    )
+    _execute(
+        conn,
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+        f"GRANT ALL ON SEQUENCES TO {app_sql}",
+    )
+
+
 def _revoke_public_access(conn: Connection, role: str) -> None:
     role_sql = quote_ident(role)
-    _execute(conn, f"REVOKE CREATE ON SCHEMA public FROM {role_sql}")
+    _execute(conn, f"REVOKE ALL ON SCHEMA public FROM {role_sql}")
     _execute(conn, f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {role_sql}")
     _execute(conn, f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {role_sql}")
+    _execute(conn, f"REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM {role_sql}")
+
+
+def _set_agent_search_path(
+    conn: Connection, role: str, agent_schema: str, department_schema: str
+) -> None:
+    role_sql = quote_ident(role)
+    agent_sql = quote_ident(agent_schema)
+    dept_sql = quote_ident(department_schema)
+    _execute(conn, f"ALTER ROLE {role_sql} SET search_path TO {agent_sql}, {dept_sql}")
 
 
 def create_agent_role(
@@ -174,6 +207,7 @@ def create_agent_role(
     _provision_agent_owned_schema(conn, role, agent_schema)
     _grant_department_schema_access(conn, app_role=app_role, agent_role=role, schema=dept_schema)
     _revoke_public_access(conn, role)
+    _set_agent_search_path(conn, role, agent_schema, dept_schema)
 
     return {
         "db_user": role,
@@ -209,6 +243,7 @@ def drop_legacy_public_agent_tables(conn: Connection) -> None:
 
 def repair_all_agent_db_grants(conn: Connection) -> None:
     app_role = _app_db_role(conn)
+    _lock_down_public_schema(conn, app_role)
     departments = [
         row[0]
         for row in conn.execute(text("SELECT name FROM system_departments ORDER BY name")).fetchall()
@@ -231,11 +266,14 @@ def repair_all_agent_db_grants(conn: Connection) -> None:
             conn, app_role=app_role, agent_role=role, schema=dept_schema
         )
         _revoke_public_access(conn, role)
+        _set_agent_search_path(conn, role, agent_schema, dept_schema)
 
     refresh_all_cross_grants(conn)
 
 
 def provision_existing_agents_and_departments(conn: Connection) -> None:
+    app_role = _app_db_role(conn)
+    _lock_down_public_schema(conn, app_role)
     departments = [
         row[0]
         for row in conn.execute(text("SELECT name FROM system_departments ORDER BY name")).fetchall()
@@ -323,7 +361,7 @@ def agent_database_url(
 ) -> str:
     from urllib.parse import quote_plus
 
-    options = quote_plus(f"-c search_path={agent_schema},{department_schema},public")
+    options = quote_plus(f"-c search_path={agent_schema},{department_schema}")
     return (
         f"postgresql://{quote_plus(db_user)}:{quote_plus(db_password)}"
         f"@{host}:{port}/{database}?options={options}"
@@ -336,29 +374,16 @@ def build_agent_db_instructions(*, agent_name: str, department: str, db_user: st
     role = db_user or agent_db_user(agent_name)
     return "\n".join(
         [
-            "# Database access",
+            "# Database",
             "",
-            f"You connect to PostgreSQL as role `{role}`.",
-            f"Your `search_path` is `{personal_schema}, {shared_schema}, public` (personal schema first).",
+            f"Role `{role}`. search_path: `{personal_schema}, {shared_schema}` — unqualified table names resolve here.",
             "",
-            "## Where to store data",
+            f"- **`{personal_schema}`** — your tables (CREATE/ALTER/DROP, read/write).",
+            f"- **`{shared_schema}`** — `{department}` shared tables (read/write; don't drop shared objects).",
+            "- **Other schemas** — SELECT only.",
+            "- **`public`** — no access. Do not create, read, or write there; always use your schema or qualify the name.",
             "",
-            f"- **Personal schema `{personal_schema}`** — tables only you use. You own this schema: CREATE/ALTER/DROP tables, full read/write.",
-            f"- **Department schema `{shared_schema}`** — tables shared with all agents in the `{department}` department. Full read/write here, but the schema is owned by the platform (not you). Do not DROP the schema or shared tables other agents rely on.",
-            "- **Other agent and department schemas** — SELECT only (read other agents' published data; you cannot modify it).",
-            "- **`public` / `system_*` tables** — no access (platform internals).",
-            "",
-            "## MCP tools",
-            "",
-            "- `read_db` — run a SQL query (typically SELECT). Returns rows.",
-            "- `write_db` — run a SQL statement that changes data or schema (INSERT, UPDATE, DELETE, CREATE TABLE, etc.). Commits automatically.",
-            "",
-            "PostgreSQL enforces permissions; the tools do not filter your SQL.",
-            "",
-            "Examples:",
-            f"- Personal table: `CREATE TABLE daily_prices (...)` or `CREATE TABLE {personal_schema}.daily_prices (...)`",
-            f"- Shared table: `CREATE TABLE {shared_schema}.companies (...)`",
-            "- Read another department: `SELECT * FROM research.some_table LIMIT 10`",
+            "MCP: `read_db` (queries), `write_db` (INSERT/UPDATE/DELETE/DDL). Permissions are enforced by PostgreSQL.",
         ]
     )
 
