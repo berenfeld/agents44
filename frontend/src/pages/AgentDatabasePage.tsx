@@ -44,7 +44,6 @@ type RowQueryState = {
 const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
 const DEFAULT_ROW_LIMIT = 100;
 const GRID_ROW_HEIGHT = 35;
-const SIDEBAR_COLLAPSED_KEY = "agent-db-sidebar-collapsed";
 const COLUMN_VISIBILITY_PREFIX = "agent-db-columns:";
 const ALLOWED_FILTER_OPS = new Set<string>([
   "eq",
@@ -93,7 +92,13 @@ function defaultQueryState(): RowQueryState {
   };
 }
 
-function parseAgentDbSearchParams(searchParams: URLSearchParams): { table: string | null; query: RowQueryState } {
+type AgentDbPageState = {
+  table: string | null;
+  query: RowQueryState;
+  sidebarCollapsed: boolean;
+};
+
+function parseAgentDbSearchParams(searchParams: URLSearchParams): AgentDbPageState {
   const query = defaultQueryState();
 
   const limitRaw = searchParams.get("limit");
@@ -126,10 +131,14 @@ function parseAgentDbSearchParams(searchParams: URLSearchParams): { table: strin
     query.filterValue = searchParams.get("filter_value") ?? "";
   }
 
-  return { table: searchParams.get("table"), query };
+  return {
+    table: searchParams.get("table"),
+    query,
+    sidebarCollapsed: searchParams.get("sidebar") === "collapsed",
+  };
 }
 
-function buildAgentDbSearchParams(table: string | null, query: RowQueryState): URLSearchParams {
+function buildAgentDbSearchParams({ table, query, sidebarCollapsed }: AgentDbPageState): URLSearchParams {
   const params = new URLSearchParams();
   if (table) {
     params.set("table", table);
@@ -152,6 +161,9 @@ function buildAgentDbSearchParams(table: string | null, query: RowQueryState): U
     if (!NULL_FILTER_OPS.has(query.filterOp) && query.filterValue !== "") {
       params.set("filter_value", query.filterValue);
     }
+  }
+  if (sidebarCollapsed) {
+    params.set("sidebar", "collapsed");
   }
   return params;
 }
@@ -390,22 +402,6 @@ function PanelLeftCloseIcon() {
   );
 }
 
-function readSidebarCollapsed(): boolean {
-  try {
-    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeSidebarCollapsed(collapsed: boolean) {
-  try {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
-  } catch {
-    // ignore storage errors
-  }
-}
-
 function readVisibleColumns(tableName: string, columnNames: string[]): Set<string> {
   try {
     const raw = localStorage.getItem(`${COLUMN_VISIBILITY_PREFIX}${tableName}`);
@@ -435,13 +431,13 @@ function writeVisibleColumns(tableName: string, visibleColumns: ReadonlySet<stri
   }
 }
 
-function ToolbarDivider() {
-  return <span className="mx-0.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden="true" />;
+function ToolbarDivider({ className }: { className?: string }) {
+  return <span className={cn("mx-0.5 h-5 w-px shrink-0 bg-slate-200", className)} aria-hidden="true" />;
 }
 
 export default function AgentDatabasePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { table: selectedTable, query } = useMemo(
+  const { table: selectedTable, query, sidebarCollapsed } = useMemo(
     () => parseAgentDbSearchParams(searchParams),
     [searchParams],
   );
@@ -461,15 +457,17 @@ export default function AgentDatabasePage() {
     filterOp: query.filterOp,
     filterValue: query.filterValue,
   });
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set());
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const setTableAndQuery = useCallback(
     (table: string | null, nextQuery: RowQueryState, options?: { replace?: boolean }) => {
-      setSearchParams(buildAgentDbSearchParams(table, nextQuery), { replace: options?.replace ?? true });
+      setSearchParams(
+        buildAgentDbSearchParams({ table, query: nextQuery, sidebarCollapsed }),
+        { replace: options?.replace ?? true },
+      );
     },
-    [setSearchParams],
+    [setSearchParams, sidebarCollapsed],
   );
 
   const patchQuery = useCallback(
@@ -575,12 +573,15 @@ export default function AgentDatabasePage() {
   );
 
   const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((current) => {
-      const next = !current;
-      writeSidebarCollapsed(next);
-      return next;
-    });
-  }, []);
+    setSearchParams(
+      buildAgentDbSearchParams({
+        table: selectedTable,
+        query,
+        sidebarCollapsed: !sidebarCollapsed,
+      }),
+      { replace: true },
+    );
+  }, [query, selectedTable, setSearchParams, sidebarCollapsed]);
 
   useEffect(() => {
     const timers = saveTimers.current;
@@ -900,47 +901,54 @@ export default function AgentDatabasePage() {
           </>
         }
       >
-          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border bg-white px-2 py-1.5">
-            {sidebarCollapsed ? (
-              <ToolbarIconButton
-                title="Expand tables panel"
-                variant="outline"
-                onClick={toggleSidebar}
-                className="hidden md:inline-flex"
-              >
-                <PanelLeftIcon />
+          <div className="flex flex-col gap-2 rounded-lg border bg-white px-2 py-1.5 md:flex-row md:flex-nowrap md:items-center md:gap-1.5 md:overflow-x-auto">
+            <div className="flex flex-wrap items-center gap-1.5 md:contents">
+              {sidebarCollapsed ? (
+                <ToolbarIconButton
+                  title="Expand tables panel"
+                  variant="outline"
+                  onClick={toggleSidebar}
+                  className="hidden md:inline-flex"
+                >
+                  <PanelLeftIcon />
+                </ToolbarIconButton>
+              ) : null}
+              <ToolbarIconButton title="Add row" onClick={addRow} disabled={!schema || busy}>
+                <PlusIcon />
               </ToolbarIconButton>
-            ) : null}
-            <ToolbarIconButton title="Add row" onClick={addRow} disabled={!schema || busy}>
-              <PlusIcon />
-            </ToolbarIconButton>
-            <ToolbarIconButton
-              title="Refresh"
-              variant="outline"
-              onClick={() => selectedTable && loadTableData(selectedTable, query)}
-              disabled={!selectedTable || loading || busy}
-            >
-              <RefreshIcon />
-            </ToolbarIconButton>
-            <ToolbarIconButton
-              title={`Delete selected (${deleteCount})`}
-              variant="destructive"
-              onClick={() => setDeleteOpen(true)}
-              disabled={deleteCount === 0 || busy}
-            >
-              <TrashIcon />
-            </ToolbarIconButton>
+              <ToolbarIconButton
+                title="Refresh"
+                variant="outline"
+                onClick={() => selectedTable && loadTableData(selectedTable, query)}
+                disabled={!selectedTable || loading || busy}
+              >
+                <RefreshIcon />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                title={`Delete selected (${deleteCount})`}
+                variant="destructive"
+                onClick={() => setDeleteOpen(true)}
+                disabled={deleteCount === 0 || busy}
+              >
+                <TrashIcon />
+              </ToolbarIconButton>
+
+              {schema ? (
+                <>
+                  <ToolbarDivider className="hidden md:block" />
+                  <ColumnProjectionMenu
+                    columns={projectionColumns}
+                    visibleColumns={visibleColumns}
+                    onVisibleColumnsChange={handleVisibleColumnsChange}
+                    disabled={loading || busy}
+                  />
+                </>
+              ) : null}
+            </div>
 
             {schema ? (
-              <>
-                <ToolbarDivider />
-                <ColumnProjectionMenu
-                  columns={projectionColumns}
-                  visibleColumns={visibleColumns}
-                  onVisibleColumnsChange={handleVisibleColumnsChange}
-                  disabled={loading || busy}
-                />
-                <ToolbarDivider />
+              <div className="flex flex-wrap items-center gap-1.5 md:contents">
+                <ToolbarDivider className="hidden md:block" />
                 <span className="shrink-0 text-xs font-medium text-slate-500">Filter</span>
                 <select
                   id="filter-column"
@@ -1008,63 +1016,65 @@ export default function AgentDatabasePage() {
                     <XIcon />
                   </ToolbarIconButton>
                 ) : null}
-              </>
+              </div>
             ) : null}
 
-            <ToolbarDivider />
-            <select
-              id="row-limit"
-              aria-label="Rows per page"
-              value={query.limit}
-              onChange={(event) =>
-                patchQuery({
-                  limit: Number(event.target.value),
-                  offset: 0,
-                })
-              }
-              disabled={!selectedTable || loading}
-              className={selectClassName("w-16 shrink-0")}
-            >
-              {ROW_LIMIT_OPTIONS.map((limit) => (
-                <option key={limit} value={limit}>
-                  {limit}
-                </option>
-              ))}
-            </select>
-            <ToolbarIconButton
-              title="Previous page"
-              variant="outline"
-              onClick={() => patchQuery({ offset: Math.max(0, query.offset - query.limit) })}
-              disabled={!canGoPrev || loading}
-            >
-              <ChevronLeftIcon />
-            </ToolbarIconButton>
-            <ToolbarIconButton
-              title="Next page"
-              variant="outline"
-              onClick={() => patchQuery({ offset: query.offset + query.limit })}
-              disabled={!canGoNext || loading}
-            >
-              <ChevronRightIcon />
-            </ToolbarIconButton>
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 md:contents">
+              <ToolbarDivider className="hidden md:block" />
+              <select
+                id="row-limit"
+                aria-label="Rows per page"
+                value={query.limit}
+                onChange={(event) =>
+                  patchQuery({
+                    limit: Number(event.target.value),
+                    offset: 0,
+                  })
+                }
+                disabled={!selectedTable || loading}
+                className={selectClassName("w-16 shrink-0")}
+              >
+                {ROW_LIMIT_OPTIONS.map((limit) => (
+                  <option key={limit} value={limit}>
+                    {limit}
+                  </option>
+                ))}
+              </select>
+              <ToolbarIconButton
+                title="Previous page"
+                variant="outline"
+                onClick={() => patchQuery({ offset: Math.max(0, query.offset - query.limit) })}
+                disabled={!canGoPrev || loading}
+              >
+                <ChevronLeftIcon />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                title="Next page"
+                variant="outline"
+                onClick={() => patchQuery({ offset: query.offset + query.limit })}
+                disabled={!canGoNext || loading}
+              >
+                <ChevronRightIcon />
+              </ToolbarIconButton>
 
-            <span className="ml-auto shrink-0 truncate text-xs text-slate-500">
-              {busy ? "Saving… · " : ""}
-              {selectedTable ? (
-                <>
-                  {selectedTable} · {rangeStart}–{rangeEnd}/{total}
-                  {query.filterColumn && query.filterOp ? (
-                    <>
-                      {" "}
-                      · {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
-                      {!NULL_FILTER_OPS.has(query.filterOp as AgentDbFilterOp) ? ` "${query.filterValue}"` : ""}
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                "Select a table"
-              )}
-            </span>
+              <span className="min-w-0 basis-full text-xs leading-relaxed text-slate-500 md:ml-auto md:basis-auto md:shrink-0 md:truncate">
+                {busy ? "Saving… · " : ""}
+                {selectedTable ? (
+                  <>
+                    {selectedTable} · {rangeStart}–{rangeEnd}/{total}
+                    {query.filterColumn && query.filterOp ? (
+                      <>
+                        {" "}
+                        · {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
+                        {!NULL_FILTER_OPS.has(query.filterOp as AgentDbFilterOp) ? ` "${query.filterValue}"` : ""}
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  "Select a table"
+                )}
+              </span>
+            </div>
           </div>
 
           <div className="hidden rounded-lg border bg-white md:block">

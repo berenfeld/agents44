@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import current_app
@@ -88,6 +88,16 @@ def ensure_agent_folder(agent_name: str) -> None:
     (agent_dir / ".runs").mkdir(exist_ok=True)
 
 
+def _file_stat_fields(path: Path) -> dict:
+    if not path.exists() or path.is_dir():
+        return {"size_bytes": None, "modified_at": None}
+    stat = path.stat()
+    return {
+        "size_bytes": stat.st_size,
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+    }
+
+
 def list_path(path: str = "") -> dict:
     target = safe_path(path)
     if not target.exists():
@@ -95,16 +105,17 @@ def list_path(path: str = "") -> dict:
     if target.is_file():
         content = target.read_text(encoding="utf-8")
         rel = str(target.relative_to(workspace_root()))
-        return {"path": rel, "is_dir": False, "content": content, "size_bytes": target.stat().st_size}
+        return {"path": rel, "is_dir": False, "content": content, **_file_stat_fields(target)}
     children = []
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         rel = str(child.relative_to(workspace_root()))
+        stat_fields = _file_stat_fields(child) if child.is_file() else {"size_bytes": None, "modified_at": None}
         children.append(
             {
                 "path": rel,
                 "name": child.name,
                 "is_dir": child.is_dir(),
-                "size_bytes": None if child.is_dir() else child.stat().st_size,
+                **stat_fields,
             }
         )
     rel = str(target.relative_to(workspace_root())) if target != workspace_root() else ""

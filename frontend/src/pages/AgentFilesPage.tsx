@@ -10,15 +10,23 @@ import remarkGfm from "remark-gfm";
 import { api } from "@/api/client";
 import { Button, Input } from "@/components/ui/primitives";
 import { ConfirmModal } from "@/components/ui/modal";
+import { PanelCard, SplitPanelLayout } from "@/components/ui/split-panel-layout";
 import { cn } from "@/lib/utils";
 
-type FileEntry = { path: string; name: string; is_dir: boolean; size_bytes: number | null };
+type FileEntry = {
+  path: string;
+  name: string;
+  is_dir: boolean;
+  size_bytes: number | null;
+  modified_at: string | null;
+};
 type PathResponse = {
   path: string;
   is_dir: boolean;
   children?: FileEntry[];
   content?: string;
-  size_bytes?: number;
+  size_bytes?: number | null;
+  modified_at?: string | null;
 };
 
 const FILES_ROUTE_PREFIX = "/agents_files";
@@ -38,6 +46,21 @@ function parseFilesUrl(pathname: string): string {
 function filesUrl(path = ""): string {
   if (!path) return FILES_ROUTE_PREFIX;
   return `${FILES_ROUTE_PREFIX}/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function filesQueryString(
+  search: string,
+  options?: { edit?: boolean; sidebarCollapsed?: boolean },
+): string {
+  const params = new URLSearchParams(search);
+  const edit = options?.edit ?? params.get("edit") === "1";
+  const sidebarCollapsed = options?.sidebarCollapsed ?? params.get("sidebar") === "collapsed";
+  params.delete("edit");
+  params.delete("sidebar");
+  if (edit) params.set("edit", "1");
+  if (sidebarCollapsed) params.set("sidebar", "collapsed");
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 function parentFolder(path: string): string {
@@ -65,84 +88,61 @@ function formatFileSize(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function TrashIcon() {
+function formatModified(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
+
+function PanelLeftIcon() {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-4 w-4"
-      aria-hidden="true"
-    >
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" strokeLinecap="round" />
     </svg>
   );
 }
 
-function EyeIcon() {
+function PanelLeftCloseIcon() {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-4 w-4"
-      aria-hidden="true"
-    >
-      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-      <circle cx="12" cy="12" r="3" />
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" strokeLinecap="round" />
+      <path d="m14 9-3 3 3 3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function PencilIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-4 w-4"
-      aria-hidden="true"
-    >
-      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-      <path d="m15 5 4 4" />
-    </svg>
-  );
-}
-
-function FileActionButton({
+function ToolbarIconButton({
   title,
-  label,
   onClick,
+  disabled,
+  variant = "default",
+  className,
   children,
 }: {
   title: string;
-  label: string;
-  onClick: (e: React.MouseEvent) => void;
+  onClick: () => void;
+  disabled?: boolean;
+  variant?: "default" | "outline" | "destructive";
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
-      className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
       title={title}
-      aria-label={label}
+      aria-label={title}
+      disabled={disabled}
       onClick={onClick}
+      className={cn(
+        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md disabled:opacity-40",
+        variant === "default" && "bg-slate-900 text-white hover:bg-slate-800",
+        variant === "outline" && "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+        variant === "destructive" && "bg-red-600 text-white hover:bg-red-700",
+        className,
+      )}
     >
       {children}
     </button>
@@ -153,7 +153,9 @@ export default function AgentFilesPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const urlPath = parseFilesUrl(location.pathname);
-  const urlEditMode = new URLSearchParams(location.search).get("edit") === "1";
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const urlEditMode = searchParams.get("edit") === "1";
+  const sidebarCollapsed = searchParams.get("sidebar") === "collapsed";
 
   const [currentFolder, setCurrentFolder] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -161,6 +163,10 @@ export default function AgentFilesPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState("");
+  const [selectedMeta, setSelectedMeta] = useState<{ size_bytes: number | null; modified_at: string | null }>({
+    size_bytes: null,
+    modified_at: null,
+  });
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [newFileName, setNewFileName] = useState("");
@@ -173,6 +179,21 @@ export default function AgentFilesPage() {
     () => (currentFolder ? currentFolder.split("/").filter(Boolean) : []),
     [currentFolder],
   );
+
+  const navigateWithQuery = useCallback(
+    (path: string, options?: { edit?: boolean; sidebarCollapsed?: boolean; replace?: boolean }) => {
+      navigate(`${filesUrl(path)}${filesQueryString(location.search, options)}`, {
+        replace: options?.replace,
+      });
+    },
+    [location.search, navigate],
+  );
+
+  const toggleSidebar = useCallback(() => {
+    navigate(`${location.pathname}${filesQueryString(location.search, { sidebarCollapsed: !sidebarCollapsed })}`, {
+      replace: true,
+    });
+  }, [location.pathname, location.search, navigate, sidebarCollapsed]);
 
   const fetchFolder = useCallback(async (folderPath = "") => {
     const res = await api.get<PathResponse>("/files", { params: { path: folderPath } });
@@ -191,6 +212,7 @@ export default function AgentFilesPage() {
       if (!urlPath) {
         setCurrentFolder("");
         setSelectedPath("");
+        setSelectedMeta({ size_bytes: null, modified_at: null });
         setContent("");
         setDirty(false);
         setSaveStatus("idle");
@@ -203,6 +225,7 @@ export default function AgentFilesPage() {
       if (res.data.is_dir) {
         setCurrentFolder(urlPath);
         setSelectedPath("");
+        setSelectedMeta({ size_bytes: null, modified_at: null });
         setContent("");
         setDirty(false);
         setSaveStatus("idle");
@@ -214,6 +237,10 @@ export default function AgentFilesPage() {
       const folder = parentFolder(urlPath);
       setCurrentFolder(folder);
       setSelectedPath(urlPath);
+      setSelectedMeta({
+        size_bytes: res.data.size_bytes ?? null,
+        modified_at: res.data.modified_at ?? null,
+      });
       setContent(res.data.content || "");
       setDirty(false);
       setSaveStatus("idle");
@@ -234,26 +261,24 @@ export default function AgentFilesPage() {
 
   const enterFolder = useCallback(
     (path: string) => {
-      navigate(filesUrl(path));
+      navigateWithQuery(path);
     },
-    [navigate],
+    [navigateWithQuery],
   );
 
   const openFile = useCallback(
     (path: string, mode: "view" | "edit" = "view") => {
-      const url = filesUrl(path);
-      navigate(mode === "edit" ? `${url}?edit=1` : url);
+      navigateWithQuery(path, { edit: mode === "edit" });
     },
-    [navigate],
+    [navigateWithQuery],
   );
 
   const setFileMode = useCallback(
     (mode: "view" | "edit") => {
       if (!selectedPath) return;
-      const url = filesUrl(selectedPath);
-      navigate(mode === "edit" ? `${url}?edit=1` : url, { replace: true });
+      navigateWithQuery(selectedPath, { edit: mode === "edit", replace: true });
     },
-    [navigate, selectedPath],
+    [navigateWithQuery, selectedPath],
   );
 
   const editorExtensions = useMemo(() => {
@@ -263,9 +288,9 @@ export default function AgentFilesPage() {
     return [EditorView.lineWrapping, editorAutoHeight, ...lang];
   }, [selectedPath]);
 
-  const reloadFolder = async () => {
+  const reloadFolder = useCallback(async () => {
     setEntriesWithDrafts(await fetchFolder(currentFolder));
-  };
+  }, [currentFolder, fetchFolder, setEntriesWithDrafts]);
 
   const saveFile = useCallback(async () => {
     if (!selectedPath || !dirty || !isEditable(selectedPath) || saveStatus === "saving") return;
@@ -273,13 +298,18 @@ export default function AgentFilesPage() {
     try {
       await api.put("/files", { path: selectedPath, content });
       setDirty(false);
+      const res = await api.get<PathResponse>("/files", { params: { path: selectedPath } });
+      setSelectedMeta({
+        size_bytes: res.data.size_bytes ?? null,
+        modified_at: res.data.modified_at ?? null,
+      });
       await reloadFolder();
       setSaveStatus("saved");
     } catch (err) {
       setSaveStatus("idle");
       throw err;
     }
-  }, [selectedPath, dirty, content, saveStatus]);
+  }, [selectedPath, dirty, content, saveStatus, reloadFolder]);
 
   useEffect(() => {
     if (viewMode || !selectedPath || !isEditable(selectedPath)) return;
@@ -308,7 +338,7 @@ export default function AgentFilesPage() {
     const newPath = folder ? `${folder}/${trimmed}` : trimmed;
     await api.put("/files", { old_path: entry.path, new_path: newPath });
     if (selectedPath === entry.path) {
-      navigate(filesUrl(newPath));
+      navigateWithQuery(newPath, { edit: !viewMode });
       return;
     }
     await reloadFolder();
@@ -320,23 +350,27 @@ export default function AgentFilesPage() {
     const path = currentFolder ? `${currentFolder}/${name}` : name;
     await api.post("/files", { path, content: "" });
     setNewFileName("");
-    navigate(filesUrl(path));
+    navigateWithQuery(path);
   };
 
   const renderFileContent = () => {
+    if (!selectedPath) {
+      return <p className="text-sm text-slate-500">Select a file to view or edit.</p>;
+    }
+
     const ext = extension(selectedPath);
 
     if (viewMode) {
       if (ext === "md" || ext === "markdown") {
         return (
-          <div className="overflow-x-auto rounded border bg-white p-4 text-sm leading-relaxed text-slate-900 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_table]:mb-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5">
+          <div className="overflow-x-auto text-sm leading-relaxed text-slate-900 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_table]:mb-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
         );
       }
 
       return (
-        <pre className="whitespace-pre-wrap break-words rounded border bg-white p-4 font-mono text-sm text-slate-900">
+        <pre className="whitespace-pre-wrap break-words font-mono text-sm text-slate-900">
           {content}
         </pre>
       );
@@ -363,191 +397,187 @@ export default function AgentFilesPage() {
     );
   };
 
+  const renderFileSidebar = () => (
+    <PanelCard className="flex max-h-[calc(100vh-12rem)] flex-col overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+        <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-xs text-slate-600">
+          <Link
+            to={`${filesUrl()}${filesQueryString(location.search)}`}
+            className="rounded px-0.5 hover:bg-slate-100 hover:text-slate-900"
+          >
+            .workspace
+          </Link>
+          {breadcrumbSegments.map((segment, index) => {
+            const path = breadcrumbSegments.slice(0, index + 1).join("/");
+            return (
+              <span key={path} className="flex min-w-0 items-center gap-0.5">
+                <span className="text-slate-400">/</span>
+                <Link
+                  to={`${filesUrl(path)}${filesQueryString(location.search)}`}
+                  className="truncate rounded px-0.5 hover:bg-slate-100 hover:text-slate-900"
+                >
+                  {segment}
+                </Link>
+              </span>
+            );
+          })}
+        </nav>
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title="Collapse files panel"
+          aria-label="Collapse files panel"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        >
+          <PanelLeftCloseIcon />
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="p-4 text-sm text-slate-500">Loading...</p>
+      ) : (
+        <ul className="flex-1 divide-y overflow-y-auto text-sm">
+          {currentFolder ? (
+            <li>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-slate-600 hover:bg-slate-50"
+                onClick={() => enterFolder(parentFolder(currentFolder))}
+              >
+                <span className="w-4 shrink-0 text-xs">📁</span>
+                <span className="min-w-0 flex-1 truncate">..</span>
+              </button>
+            </li>
+          ) : null}
+
+          {entries.map((entry) => (
+            <li
+              key={entry.path}
+              className={cn(
+                "px-3 py-1.5 hover:bg-slate-50",
+                selectedPath === entry.path && "bg-slate-100",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="w-4 shrink-0 text-xs">{entry.is_dir ? "📁" : "📄"}</span>
+
+                {entry.is_dir ? (
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left"
+                    onClick={() => enterFolder(entry.path)}
+                  >
+                    {entry.name}/
+                  </button>
+                ) : renamingPath === entry.path ? (
+                  <Input
+                    className="h-7 min-w-0 flex-1 px-1 text-sm"
+                    value={draftNames[entry.path] ?? entry.name}
+                    autoFocus
+                    onChange={(e) => {
+                      setDraftNames((prev) => ({ ...prev, [entry.path]: e.target.value }));
+                    }}
+                    onBlur={() => commitEntryRename(entry).catch(console.error)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.currentTarget.blur();
+                      }
+                      if (e.key === "Escape") {
+                        setRenamingPath(null);
+                        setDraftNames((prev) => ({ ...prev, [entry.path]: entry.name }));
+                      }
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left hover:text-slate-900"
+                    title="View file (double-click to rename)"
+                    onClick={() => openFile(entry.path, "view")}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      setRenamingPath(entry.path);
+                    }}
+                  >
+                    {entry.name}
+                  </button>
+                )}
+
+                {!entry.is_dir ? (
+                  <span className="shrink-0 text-xs text-slate-400">{formatFileSize(entry.size_bytes)}</span>
+                ) : null}
+              </div>
+            </li>
+          ))}
+
+          <li className="bg-slate-50/50 px-3 py-2">
+            <Input
+              className="h-7 border-dashed bg-white text-sm"
+              placeholder="new-file.txt"
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  createNewFile().catch(console.error);
+                }
+              }}
+            />
+          </li>
+        </ul>
+      )}
+    </PanelCard>
+  );
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Agent Files</h1>
 
-      <nav className="flex flex-wrap items-center gap-1 text-sm text-slate-600">
-        <Link to={filesUrl()} className="rounded px-1 hover:bg-slate-100 hover:text-slate-900">
-          .workspace
-        </Link>
-        {breadcrumbSegments.map((segment, index) => {
-          const path = breadcrumbSegments.slice(0, index + 1).join("/");
-          return (
-            <span key={path} className="flex items-center gap-1">
-              <span>/</span>
-              <Link to={filesUrl(path)} className="rounded px-1 hover:bg-slate-100 hover:text-slate-900">
-                {segment}
-              </Link>
-            </span>
-          );
-        })}
-      </nav>
-
       {loadError ? <p className="rounded bg-amber-50 p-3 text-sm text-amber-900">{loadError}</p> : null}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="rounded-lg border bg-white md:col-span-1">
-          <div className="border-b px-3 py-2">
-            <p className="text-sm font-medium text-slate-700">
-              {currentFolder ? `${currentFolder}/` : ".workspace/"}
-            </p>
-          </div>
+      <SplitPanelLayout sidebarClassName={sidebarCollapsed ? "md:hidden" : undefined} sidebar={renderFileSidebar()}>
+        <div className="flex min-h-[calc(100vh-12rem)] flex-col overflow-hidden rounded-lg border bg-white">
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b px-2 py-1.5">
+            {sidebarCollapsed ? (
+              <ToolbarIconButton
+                title="Expand files panel"
+                variant="outline"
+                onClick={toggleSidebar}
+                className="hidden md:inline-flex"
+              >
+                <PanelLeftIcon />
+              </ToolbarIconButton>
+            ) : null}
 
-          {loading ? (
-            <p className="p-4 text-sm text-slate-500">Loading...</p>
-          ) : (
-            <ul className="divide-y text-sm">
-              {currentFolder ? (
-                <li>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-600 hover:bg-slate-50"
-                    onClick={() => enterFolder(parentFolder(currentFolder))}
-                  >
-                    <span className="w-5">📁</span>
-                    <span className="min-w-0 flex-1">..</span>
-                    <span className="shrink-0 text-xs text-slate-400">—</span>
-                  </button>
-                </li>
-              ) : null}
-
-              {entries.map((entry) => (
-                <li
-                  key={entry.path}
-                  className={cn(
-                    "flex items-center gap-1 px-3 py-2 hover:bg-slate-50",
-                    selectedPath === entry.path && "bg-slate-100",
-                  )}
-                >
-                  <span className="w-5 shrink-0">{entry.is_dir ? "📁" : "📄"}</span>
-
-                  {entry.is_dir ? (
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 truncate text-left"
-                      onClick={() => enterFolder(entry.path)}
-                    >
-                      {entry.name}/
-                    </button>
-                  ) : renamingPath === entry.path ? (
-                    <Input
-                      className="h-8 min-w-0 flex-1 px-1 text-sm"
-                      value={draftNames[entry.path] ?? entry.name}
-                      autoFocus
-                      onChange={(e) => {
-                        setDraftNames((prev) => ({ ...prev, [entry.path]: e.target.value }));
-                      }}
-                      onBlur={() => commitEntryRename(entry).catch(console.error)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.currentTarget.blur();
-                        }
-                        if (e.key === "Escape") {
-                          setRenamingPath(null);
-                          setDraftNames((prev) => ({ ...prev, [entry.path]: entry.name }));
-                        }
-                      }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 truncate text-left hover:text-slate-900"
-                      title="View file (double-click to rename)"
-                      onClick={() => openFile(entry.path, "view")}
-                      onDoubleClick={(e) => {
-                        e.preventDefault();
-                        setRenamingPath(entry.path);
-                      }}
-                    >
-                      {entry.name}
-                    </button>
-                  )}
-
-                  <span className="shrink-0 text-xs text-slate-500">{formatFileSize(entry.size_bytes)}</span>
-
-                  {!entry.is_dir ? (
-                    <>
-                      <FileActionButton
-                        title="View file"
-                        label={`View ${entry.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openFile(entry.path, "view");
-                        }}
-                      >
-                        <EyeIcon />
-                      </FileActionButton>
-                      {isEditable(entry.path) ? (
-                        <FileActionButton
-                          title="Edit file"
-                          label={`Edit ${entry.name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openFile(entry.path, "edit");
-                          }}
-                        >
-                          <PencilIcon />
-                        </FileActionButton>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                        title="Delete file"
-                        aria-label={`Delete ${entry.name}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteTarget(entry.path);
-                        }}
-                      >
-                        <TrashIcon />
-                      </button>
-                    </>
-                  ) : (
-                    <span className="w-[4.5rem] shrink-0" />
-                  )}
-                </li>
-              ))}
-
-              <li className="bg-slate-50/50 px-3 py-2">
-                <Input
-                  className="h-8 border-dashed bg-white text-sm"
-                  placeholder="new-file.txt"
-                  value={newFileName}
-                  onChange={(e) => setNewFileName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      createNewFile().catch(console.error);
-                    }
-                  }}
-                />
-              </li>
-            </ul>
-          )}
-        </div>
-
-        <div className="min-w-0 space-y-3 rounded-lg border bg-white p-4 md:col-span-2">
-          {!selectedPath ? (
-            <p className="text-sm text-slate-500">Select a file to view or edit.</p>
-          ) : (
-            <>
-              <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-sm text-slate-600">{selectedPath}</p>
-                <div className="flex shrink-0 items-center gap-2">
+            {selectedPath ? (
+              <>
+                <span className="shrink-0 text-sm font-semibold text-slate-800">{fileName(selectedPath)}</span>
+                <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">|</span>
+                <span className="shrink-0 text-xs text-slate-500">{formatFileSize(selectedMeta.size_bytes)}</span>
+                <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">|</span>
+                <span className="shrink-0 text-xs text-slate-500" title={selectedMeta.modified_at ?? undefined}>
+                  {formatModified(selectedMeta.modified_at)}
+                </span>
+                {dirty ? (
+                  <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                    Unsaved
+                  </span>
+                ) : null}
+                <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   {viewMode ? (
                     isEditable(selectedPath) ? (
-                      <Button variant="outline" onClick={() => setFileMode("edit")}>
+                      <Button variant="outline" className="h-8 px-2.5 text-xs" onClick={() => setFileMode("edit")}>
                         Edit
                       </Button>
                     ) : null
                   ) : (
-                    <Button variant="outline" onClick={() => setFileMode("view")}>
+                    <Button variant="outline" className="h-8 px-2.5 text-xs" onClick={() => setFileMode("view")}>
                       View
                     </Button>
                   )}
                   {!viewMode ? (
                     <Button
+                      className="h-8 px-2.5 text-xs"
                       disabled={
                         saveStatus === "saving" ||
                         saveStatus === "saved" ||
@@ -559,14 +589,23 @@ export default function AgentFilesPage() {
                       {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
                     </Button>
                   ) : null}
+                  <Button
+                    variant="destructive"
+                    className="h-8 px-2.5 text-xs"
+                    onClick={() => setDeleteTarget(selectedPath)}
+                  >
+                    Delete
+                  </Button>
                 </div>
-              </div>
+              </>
+            ) : (
+              <span className="text-sm text-slate-500">Select a file to view or edit</span>
+            )}
+          </div>
 
-              {renderFileContent()}
-            </>
-          )}
+          <div className="min-w-0 flex-1 overflow-auto p-4">{renderFileContent()}</div>
         </div>
-      </div>
+      </SplitPanelLayout>
 
       <ConfirmModal
         open={!!deleteTarget}
@@ -584,7 +623,7 @@ export default function AgentFilesPage() {
           await api.delete("/files", { data: { path: deleteTarget } });
           setDeleteTarget(null);
           if (selectedPath === deleteTarget) {
-            navigate(filesUrl(currentFolder));
+            navigateWithQuery(currentFolder);
             return;
           }
           await reloadFolder();

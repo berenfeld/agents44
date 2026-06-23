@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { cn } from "@/lib/utils";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { AppNav } from "@/components/ui/app-nav";
 import { ConfirmModal } from "@/components/ui/modal";
@@ -16,14 +15,11 @@ import { AppFooter } from "@/components/ui/app-footer";
 
 function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const location = useLocation();
-  const isAgentDatabase = location.pathname.startsWith("/agent_database");
-  const shellWidth = isAgentDatabase ? "max-w-none" : "max-w-7xl";
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
       <header className="border-b bg-white">
-        <div className={cn("mx-auto flex w-full flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between", shellWidth)}>
+        <div className="mx-auto flex w-full max-w-none flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center justify-between gap-3 text-sm md:order-2">
             <span className="min-w-0 truncate text-slate-600">{email}</span>
             <Button variant="outline" onClick={() => setLogoutOpen(true)}>
@@ -36,7 +32,7 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
           </div>
         </div>
       </header>
-      <main className={cn("mx-auto w-full flex-1 px-4 py-6", shellWidth)}>
+      <main className="mx-auto w-full max-w-none flex-1 px-4 py-6">
         <Routes>
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents_runs" element={<AgentsRunsPage />} />
