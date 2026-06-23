@@ -398,7 +398,7 @@ export default function AgentFilesPage() {
   };
 
   const renderFileSidebar = () => (
-    <PanelCard className="flex max-h-[calc(100vh-12rem)] flex-col overflow-hidden">
+    <PanelCard className="flex flex-col">
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
         <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-xs text-slate-600">
           <Link
@@ -436,7 +436,7 @@ export default function AgentFilesPage() {
       {loading ? (
         <p className="p-4 text-sm text-slate-500">Loading...</p>
       ) : (
-        <ul className="flex-1 divide-y overflow-y-auto text-sm">
+        <ul className="divide-y text-sm">
           {currentFolder ? (
             <li>
               <button
@@ -536,7 +536,7 @@ export default function AgentFilesPage() {
       {loadError ? <p className="rounded bg-amber-50 p-3 text-sm text-amber-900">{loadError}</p> : null}
 
       <SplitPanelLayout sidebarClassName={sidebarCollapsed ? "md:hidden" : undefined} sidebar={renderFileSidebar()}>
-        <div className="flex min-h-[calc(100vh-12rem)] flex-col overflow-hidden rounded-lg border bg-white">
+        <div className="flex flex-col rounded-lg border bg-white">
           <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b px-2 py-1.5">
             {sidebarCollapsed ? (
               <ToolbarIconButton
@@ -603,7 +603,7 @@ export default function AgentFilesPage() {
             )}
           </div>
 
-          <div className="min-w-0 flex-1 overflow-auto p-4">{renderFileContent()}</div>
+          <div className="min-w-0 p-4">{renderFileContent()}</div>
         </div>
       </SplitPanelLayout>
 
