@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Agent, api, buildAgentWritePayload, ModelsResponse } from "@/api/client";
 import { AgentDetailSummary } from "@/components/agents/AgentDetailSummary";
 import { AgentFormDialog } from "@/components/agents/AgentFormDialog";
+import { AgentRunningTag } from "@/components/agents/AgentRunningTag";
 import {
   EnabledToggle,
   InlineCrondInput,
@@ -63,9 +64,28 @@ export default function AgentsPage() {
     setLoading(false);
   }, []);
 
+  const refreshRunningStatus = useCallback(async () => {
+    const res = await api.get<Agent[]>("/agents");
+    const runningById = new Map(res.data.map((agent) => [agent.id, agent.is_running]));
+    setAgents((prev) =>
+      prev.map((agent) => {
+        const isRunning = runningById.get(agent.id);
+        return isRunning === undefined || isRunning === agent.is_running
+          ? agent
+          : { ...agent, is_running: isRunning };
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     load().catch(console.error);
   }, [load]);
+
+  useEffect(() => {
+    if (loading) return;
+    const timer = setInterval(() => refreshRunningStatus().catch(console.error), 5000);
+    return () => clearInterval(timer);
+  }, [loading, refreshRunningStatus]);
 
   const patchAgent = async (
     agent: Agent,
@@ -146,7 +166,12 @@ export default function AgentsPage() {
               <tbody>
                 {sorted.map((agent) => (
                   <tr key={agent.id} className="border-t">
-                    <td className="px-4 py-2 font-medium">{agent.name}</td>
+                    <td className="px-4 py-2 font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        {agent.name}
+                        {agent.is_running ? <AgentRunningTag /> : null}
+                      </span>
+                    </td>
                     <td className="px-4 py-2">{agent.department}</td>
                     <td className="px-4 py-2">
                       <InlineModelSelect
@@ -201,7 +226,12 @@ export default function AgentsPage() {
           <MobileCardList>
             {sorted.map((agent) => (
               <DataCard key={agent.id}>
-                <DataCardTitle>{agent.name}</DataCardTitle>
+                <DataCardTitle>
+                  <span className="inline-flex items-center gap-2">
+                    {agent.name}
+                    {agent.is_running ? <AgentRunningTag /> : null}
+                  </span>
+                </DataCardTitle>
                 <dl>
                   <DataCardField label="Department">{agent.department}</DataCardField>
                   <DataCardField label="Model">
@@ -287,6 +317,7 @@ export default function AgentsPage() {
           if (!triggerAgent) return;
           await api.post(`/agents/${triggerAgent.id}/trigger`, {});
           setTriggerAgent(null);
+          await refreshRunningStatus();
         }}
       />
     </div>

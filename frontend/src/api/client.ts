@@ -22,6 +22,7 @@ export type Agent = {
   crond: string | null;
   enabled: boolean;
   timeout_seconds: number;
+  is_running: boolean;
 };
 
 export type AgentWritePayload = {

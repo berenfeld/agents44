@@ -1,10 +1,12 @@
 from flask import Blueprint, jsonify, request
 from marshmallow import EXCLUDE, Schema, ValidationError, fields, pre_load, validate
+from sqlalchemy import select
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.extensions import db
-from app.models import SystemAgent, SystemDepartment
+from app.models import SystemAgent, SystemAgentRun, SystemDepartment
+from app.models.run_status import RunStatus
 from app.services.model_registry import validate_model
 from app.services.scheduler import sync_scheduler_jobs
 from app.services.timeout import parse_timeout_input
@@ -54,12 +56,22 @@ def _require_department(name: str) -> str:
     return department
 
 
+def _active_run_agent_ids() -> set[int]:
+    rows = db.session.execute(
+        select(SystemAgentRun.agent_id)
+        .where(SystemAgentRun.status.in_((RunStatus.pending, RunStatus.running)))
+        .distinct()
+    ).scalars()
+    return set(rows)
+
+
 @agents_bp.get("")
 @api_endpoint
 @login_required
 def list_agents():
     agents = SystemAgent.query.order_by(SystemAgent.name).all()
-    return jsonify([a.to_dict() for a in agents])
+    active_ids = _active_run_agent_ids()
+    return jsonify([{**agent.to_dict(), "is_running": agent.id in active_ids} for agent in agents])
 
 
 @agents_bp.post("")
