@@ -93,7 +93,7 @@ export function AgentFormDialog({
       model: "",
       crond: "",
       enabled: true,
-      timeout: "5:00",
+      timeout: "5m",
     },
   });
 
@@ -115,7 +115,7 @@ export function AgentFormDialog({
           model: agent?.model || modelsRes.data.default,
           crond: agent?.crond || "",
           enabled: agent?.enabled ?? true,
-          timeout: agent ? formatTimeoutSeconds(agent.timeout_seconds) : "5:00",
+          timeout: agent ? formatTimeoutSeconds(agent.timeout_seconds) : "5m",
         });
       },
     );
@@ -199,8 +199,8 @@ export function AgentFormDialog({
           <Input id="crond" placeholder="0 9 * * *" {...register("crond")} />
           {errors.crond && <p className="text-sm text-red-600">{errors.crond.message}</p>}
         </FormField>
-        <FormField label="Timeout (mm:ss)" htmlFor="timeout">
-          <Input id="timeout" placeholder="5:00" className="font-mono" {...register("timeout")} />
+        <FormField label="Timeout" htmlFor="timeout">
+          <Input id="timeout" placeholder="5m" className="font-mono lowercase" {...register("timeout")} />
           {errors.timeout && <p className="text-sm text-red-600">{errors.timeout.message}</p>}
         </FormField>
         <div className="grid grid-cols-[minmax(0,7rem)_1fr] items-center gap-x-3">

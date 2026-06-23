@@ -86,8 +86,22 @@ export default function AgentsPage() {
   const saveTimeout = async (agent: Agent) => {
     const draft = draftTimeout[agent.id] ?? "";
     const seconds = parseTimeoutInput(draft);
-    if (seconds === null || seconds === agent.timeout_seconds) return;
+    if (seconds === null) return;
+    const formatted = formatTimeoutSeconds(seconds);
+    if (seconds === agent.timeout_seconds) {
+      if (draft !== formatted) {
+        setDraftTimeout((prev) => ({ ...prev, [agent.id]: formatted }));
+      }
+      return;
+    }
     await patchAgent(agent, { timeout_seconds: seconds });
+  };
+
+  const revertTimeout = (agent: Agent) => {
+    setDraftTimeout((prev) => ({
+      ...prev,
+      [agent.id]: formatTimeoutSeconds(agent.timeout_seconds),
+    }));
   };
 
   return (
@@ -159,6 +173,7 @@ export default function AgentsPage() {
                           setDraftTimeout((prev) => ({ ...prev, [agent.id]: value }));
                         }}
                         onCommit={() => saveTimeout(agent).catch(console.error)}
+                        onRevert={() => revertTimeout(agent)}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -214,6 +229,7 @@ export default function AgentsPage() {
                         setDraftTimeout((prev) => ({ ...prev, [agent.id]: value }));
                       }}
                       onCommit={() => saveTimeout(agent).catch(console.error)}
+                      onRevert={() => revertTimeout(agent)}
                     />
                   </DataCardField>
                   <DataCardField label="Enabled">

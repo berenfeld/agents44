@@ -82,31 +82,40 @@ export function InlineTimeoutInput({
   value,
   onChange,
   onCommit,
+  onRevert,
 }: {
   value: string;
   onChange: (value: string) => void;
   onCommit: () => void;
+  onRevert: () => void;
 }) {
   const error = getTimeoutError(value);
 
   const tryCommit = () => {
-    if (error) return;
+    if (error) {
+      onRevert();
+      return;
+    }
     onCommit();
   };
 
   return (
     <div className="min-w-[5rem] space-y-1">
       <Input
-        className={cn("w-20 font-mono tabular-nums", error && "border-red-500 focus-visible:ring-red-500")}
+        className={cn("w-16 font-mono lowercase", error && "border-red-500 focus-visible:ring-red-500")}
         value={value}
-        placeholder="5:00"
+        placeholder="5m"
         aria-invalid={!!error}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value.toLowerCase())}
         onBlur={tryCommit}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            if (!error) tryCommit();
+            tryCommit();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onRevert();
           }
         }}
       />
