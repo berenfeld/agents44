@@ -20,6 +20,7 @@ import {
   MobileCardList,
 } from "@/components/ui/data-card";
 import { PanelCard, SplitPanelLayout } from "@/components/ui/split-panel-layout";
+import { ColumnProjectionMenu } from "@/components/ui/column-projection-menu";
 import { cn } from "@/lib/utils";
 import "react-data-grid/lib/styles.css";
 
@@ -43,6 +44,8 @@ type RowQueryState = {
 const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
 const DEFAULT_ROW_LIMIT = 100;
 const GRID_ROW_HEIGHT = 35;
+const SIDEBAR_COLLAPSED_KEY = "agent-db-sidebar-collapsed";
+const COLUMN_VISIBILITY_PREFIX = "agent-db-columns:";
 const ALLOWED_FILTER_OPS = new Set<string>([
   "eq",
   "ne",
@@ -232,8 +235,11 @@ function buildColumns(
   sortBy: string | null,
   sortDir: SortDirection,
   onSort: (column: string) => void,
+  visibleColumns: ReadonlySet<string>,
 ): Column<GridRow>[] {
-  const dataColumns = schema.columns.map((col: AgentDbColumn) => {
+  const dataColumns = schema.columns
+    .filter((col) => visibleColumns.has(col.name))
+    .map((col: AgentDbColumn) => {
     const editable = !(col.primary_key && col.autoincrement);
     const active = sortBy === col.name;
     return {
@@ -278,12 +284,14 @@ function ToolbarIconButton({
   onClick,
   disabled,
   variant = "default",
+  className,
   children,
 }: {
   title: string;
   onClick: () => void;
   disabled?: boolean;
   variant?: "default" | "outline" | "destructive";
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -298,6 +306,7 @@ function ToolbarIconButton({
         variant === "default" && "bg-slate-900 text-white hover:bg-slate-800",
         variant === "outline" && "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
         variant === "destructive" && "bg-red-600 text-white hover:bg-red-700",
+        className,
       )}
     >
       {children}
@@ -362,6 +371,70 @@ function ChevronRightIcon() {
   );
 }
 
+function PanelLeftIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PanelLeftCloseIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" strokeLinecap="round" />
+      <path d="m14 9-3 3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function readVisibleColumns(tableName: string, columnNames: string[]): Set<string> {
+  try {
+    const raw = localStorage.getItem(`${COLUMN_VISIBILITY_PREFIX}${tableName}`);
+    if (!raw) {
+      return new Set(columnNames);
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return new Set(columnNames);
+    }
+    const allowed = new Set(columnNames);
+    const saved = parsed.filter((name): name is string => typeof name === "string" && allowed.has(name));
+    return saved.length > 0 ? new Set(saved) : new Set(columnNames);
+  } catch {
+    return new Set(columnNames);
+  }
+}
+
+function writeVisibleColumns(tableName: string, visibleColumns: ReadonlySet<string>) {
+  try {
+    localStorage.setItem(
+      `${COLUMN_VISIBILITY_PREFIX}${tableName}`,
+      JSON.stringify([...visibleColumns]),
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
 function ToolbarDivider() {
   return <span className="mx-0.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden="true" />;
 }
@@ -388,6 +461,8 @@ export default function AgentDatabasePage() {
     filterOp: query.filterOp,
     filterValue: query.filterValue,
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set());
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const setTableAndQuery = useCallback(
@@ -482,6 +557,32 @@ export default function AgentDatabasePage() {
   }, [selectedTable, query, loadTableData]);
 
   useEffect(() => {
+    if (!schema || !selectedTable) {
+      setVisibleColumns(new Set());
+      return;
+    }
+    setVisibleColumns(readVisibleColumns(selectedTable, schema.columns.map((col) => col.name)));
+  }, [schema, selectedTable]);
+
+  const handleVisibleColumnsChange = useCallback(
+    (next: Set<string>) => {
+      setVisibleColumns(next);
+      if (selectedTable) {
+        writeVisibleColumns(selectedTable, next);
+      }
+    },
+    [selectedTable],
+  );
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
     const timers = saveTimers.current;
     return () => {
       for (const timer of timers.values()) {
@@ -502,8 +603,27 @@ export default function AgentDatabasePage() {
   );
 
   const columns = useMemo(
-    () => (schema ? buildColumns(schema, query.sortBy, query.sortDir, handleSort) : []),
-    [schema, query.sortBy, query.sortDir, handleSort],
+    () =>
+      schema
+        ? buildColumns(schema, query.sortBy, query.sortDir, handleSort, visibleColumns)
+        : [],
+    [schema, query.sortBy, query.sortDir, handleSort, visibleColumns],
+  );
+
+  const projectionColumns = useMemo(
+    () =>
+      schema?.columns.map((col) => ({
+        name: col.name,
+        label: col.primary_key ? `${col.name} (PK)` : col.name,
+        type: col.type,
+        primaryKey: col.primary_key,
+      })) ?? [],
+    [schema],
+  );
+
+  const displayedSchemaColumns = useMemo(
+    () => schema?.columns.filter((col) => visibleColumns.has(col.name)) ?? [],
+    [schema, visibleColumns],
   );
 
   const gridBlockSize = useMemo(
@@ -689,7 +809,18 @@ export default function AgentDatabasePage() {
 
   const renderTableSidebar = (className?: string) => (
     <PanelCard className={cn("p-3", className)}>
-      <h2 className="mb-2 text-sm font-semibold text-slate-700">Tables</h2>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-700">Tables</h2>
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title="Collapse tables panel"
+          aria-label="Collapse tables panel"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        >
+          <PanelLeftCloseIcon />
+        </button>
+      </div>
       <div className="space-y-3">
         {tablesBySchema.map(([schemaName, schemaTables]) => (
           <div key={schemaName}>
@@ -741,8 +872,7 @@ export default function AgentDatabasePage() {
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <SplitPanelLayout
-        sidebar={
+      <SplitPanelLayout sidebarClassName={sidebarCollapsed ? "md:hidden" : undefined} sidebar={
           <>
             <div className="md:hidden">
               <label htmlFor="table-picker" className="mb-1 block text-sm font-medium text-slate-700">
@@ -766,11 +896,21 @@ export default function AgentDatabasePage() {
                 )}
               </select>
             </div>
-            {renderTableSidebar("hidden md:block")}
+            {!sidebarCollapsed ? renderTableSidebar("hidden md:block") : null}
           </>
         }
       >
           <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border bg-white px-2 py-1.5">
+            {sidebarCollapsed ? (
+              <ToolbarIconButton
+                title="Expand tables panel"
+                variant="outline"
+                onClick={toggleSidebar}
+                className="hidden md:inline-flex"
+              >
+                <PanelLeftIcon />
+              </ToolbarIconButton>
+            ) : null}
             <ToolbarIconButton title="Add row" onClick={addRow} disabled={!schema || busy}>
               <PlusIcon />
             </ToolbarIconButton>
@@ -793,6 +933,13 @@ export default function AgentDatabasePage() {
 
             {schema ? (
               <>
+                <ToolbarDivider />
+                <ColumnProjectionMenu
+                  columns={projectionColumns}
+                  visibleColumns={visibleColumns}
+                  onVisibleColumnsChange={handleVisibleColumnsChange}
+                  disabled={loading || busy}
+                />
                 <ToolbarDivider />
                 <span className="shrink-0 text-xs font-medium text-slate-500">Filter</span>
                 <select
@@ -924,6 +1071,11 @@ export default function AgentDatabasePage() {
             {loading ? (
               <div className="p-8 text-sm text-slate-500">Loading…</div>
             ) : schema && selectedTable ? (
+              visibleColumns.size === 0 ? (
+                <div className="p-8 text-sm text-slate-500">
+                  No columns selected. Use the Columns menu to choose fields to display.
+                </div>
+              ) : (
               <DataGrid
                 className="rdg-light w-full text-sm"
                 style={{ blockSize: gridBlockSize }}
@@ -935,6 +1087,7 @@ export default function AgentDatabasePage() {
                 onSelectedRowsChange={setSelectedRows}
                 onRowsChange={handleRowsChange}
               />
+              )
             ) : (
               <div className="p-8 text-sm text-slate-500">Select a table</div>
             )}
@@ -957,7 +1110,7 @@ export default function AgentDatabasePage() {
                     <DataCardTitle>{rowCardTitle(row)}</DataCardTitle>
                   </div>
                   <dl>
-                    {schema.columns.map((col) => {
+                    {displayedSchemaColumns.map((col) => {
                       const editable = !(col.primary_key && col.autoincrement);
                       const value = row[col.name];
                       const label = col.primary_key ? `${col.name} (PK)` : col.name;
