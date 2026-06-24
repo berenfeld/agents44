@@ -45,6 +45,7 @@ const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
 const DEFAULT_ROW_LIMIT = 100;
 const GRID_ROW_HEIGHT = 35;
 const COLUMN_VISIBILITY_PREFIX = "agent-db-columns:";
+const SCHEMA_COLLAPSE_KEY = "agent-db-schema-collapsed";
 const ALLOWED_FILTER_OPS = new Set<string>([
   "eq",
   "ne",
@@ -352,6 +353,22 @@ function XIcon() {
   );
 }
 
+function ChevronDownIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ChevronLeftIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
@@ -429,6 +446,30 @@ function migrateVisibleColumns(oldName: string, newName: string) {
   }
 }
 
+function readCollapsedSchemas(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SCHEMA_COLLAPSE_KEY);
+    if (!raw) {
+      return new Set();
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((name): name is string => typeof name === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsedSchemas(collapsedSchemas: ReadonlySet<string>) {
+  try {
+    localStorage.setItem(SCHEMA_COLLAPSE_KEY, JSON.stringify([...collapsedSchemas]));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 function ToolbarDivider({ className }: { className?: string }) {
   return <span className={cn("mx-0.5 h-5 w-px shrink-0 bg-slate-200", className)} aria-hidden="true" />;
 }
@@ -459,6 +500,7 @@ export default function AgentDatabasePage() {
     filterValue: query.filterValue,
   });
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set());
+  const [collapsedSchemas, setCollapsedSchemas] = useState<Set<string>>(() => readCollapsedSchemas());
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const setTableAndQuery = useCallback(
@@ -836,6 +878,19 @@ export default function AgentDatabasePage() {
     });
   };
 
+  const toggleSchemaCollapsed = (schemaName: string) => {
+    setCollapsedSchemas((current) => {
+      const next = new Set(current);
+      if (next.has(schemaName)) {
+        next.delete(schemaName);
+      } else {
+        next.add(schemaName);
+      }
+      writeCollapsedSchemas(next);
+      return next;
+    });
+  };
+
   const tablePickerOptions = useMemo(
     () =>
       tablesBySchema.flatMap(([schemaName, schemaTables]) =>
@@ -869,11 +924,23 @@ export default function AgentDatabasePage() {
         </button>
       </div>
       <div className="space-y-3">
-        {tablesBySchema.map(([schemaName, schemaTables]) => (
+        {tablesBySchema.map(([schemaName, schemaTables]) => {
+          const isExpanded = !collapsedSchemas.has(schemaName);
+          return (
           <div key={schemaName}>
-            <h3 className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              {schemaName}
-            </h3>
+            <button
+              type="button"
+              onClick={() => toggleSchemaCollapsed(schemaName)}
+              aria-expanded={isExpanded}
+              className="mb-1 flex w-full items-center gap-1 rounded px-2 py-1 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <ChevronDownIcon open={isExpanded} />
+              <span className="min-w-0 truncate">{schemaName}</span>
+              <span className="ml-auto shrink-0 text-[10px] font-normal normal-case text-slate-400">
+                {schemaTables.length}
+              </span>
+            </button>
+            {isExpanded ? (
             <ul className="space-y-1">
               {schemaTables.map((table) => {
                 const isSelected = selectedTable === table.qualified_name;
@@ -935,8 +1002,10 @@ export default function AgentDatabasePage() {
                 );
               })}
             </ul>
+            ) : null}
           </div>
-        ))}
+        );
+        })}
         {tables.length === 0 ? <p className="text-sm text-slate-500">No tables yet</p> : null}
       </div>
     </PanelCard>
