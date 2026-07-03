@@ -14,6 +14,17 @@ export type Department = {
   created_at: string | null;
 };
 
+export type AgentActiveRun = {
+  id: number;
+  started_at: string | null;
+  elapsed_seconds: number;
+  timeout_seconds: number;
+  timeout_sigterm_grace_seconds: number;
+  timeout_sigkill_grace_seconds: number;
+  timeout_sigterm_at_seconds: number;
+  timeout_sigkill_at_seconds: number;
+};
+
 export type Agent = {
   id: number;
   name: string;
@@ -23,6 +34,7 @@ export type Agent = {
   enabled: boolean;
   timeout_seconds: number;
   is_running: boolean;
+  active_run?: AgentActiveRun | null;
 };
 
 export type AgentWritePayload = {

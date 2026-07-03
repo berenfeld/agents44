@@ -34,6 +34,8 @@ _run_queue: queue.Queue = queue.Queue()
 _worker_started = False
 _active_procs: dict[int, subprocess.Popen] = {}
 _active_procs_lock = threading.Lock()
+_active_run_timeouts: dict[int, int] = {}
+_active_run_timeouts_lock = threading.Lock()
 _manual_stop_requested: set[int] = set()
 _manual_stop_lock = threading.Lock()
 
@@ -49,6 +51,7 @@ class ClaudeSubprocessResult:
     duration_seconds: float
     sigterm_sent: bool
     sigkill_sent: bool
+    enforced_timeout_seconds: int
 
 
 def _enforcement_note(
@@ -93,6 +96,59 @@ def _unregister_active_proc(run_id: int) -> None:
 def _get_active_proc(run_id: int) -> subprocess.Popen | None:
     with _active_procs_lock:
         return _active_procs.get(run_id)
+
+
+def _register_run_timeout(run_id: int, timeout_seconds: int) -> None:
+    with _active_run_timeouts_lock:
+        _active_run_timeouts[run_id] = timeout_seconds
+
+
+def _unregister_run_timeout(run_id: int) -> None:
+    with _active_run_timeouts_lock:
+        _active_run_timeouts.pop(run_id, None)
+
+
+def get_active_run_timeout(run_id: int) -> int | None:
+    with _active_run_timeouts_lock:
+        return _active_run_timeouts.get(run_id)
+
+
+def sync_agent_run_timeout(agent_id: int, timeout_seconds: int) -> None:
+    run = SystemAgentRun.query.filter_by(agent_id=agent_id, status=RunStatus.running).first()
+    if not run:
+        return
+
+    previous = get_active_run_timeout(run.id)
+    with _active_run_timeouts_lock:
+        _active_run_timeouts[run.id] = timeout_seconds
+
+    if run.log_path:
+        log_path = safe_path(run.log_path)
+        if log_path.exists():
+            sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
+            sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(
+                    "\n=== TIMEOUT UPDATED ===\n"
+                    f"previous_timeout_seconds: {previous if previous is not None else '(unknown)'}\n"
+                    f"timeout_seconds: {timeout_seconds}\n"
+                    f"timeout_sigterm_at_seconds: {timeout_seconds + sigterm_grace_seconds}\n"
+                    f"timeout_sigkill_at_seconds: {timeout_seconds + sigkill_grace_seconds}\n"
+                )
+                log_file.flush()
+
+    logger.info(
+        "AGENT_RUN_TIMEOUT_UPDATED %s",
+        json.dumps(
+            {
+                "run_id": run.id,
+                "agent_id": agent_id,
+                "previous_timeout_seconds": previous,
+                "timeout_seconds": timeout_seconds,
+            },
+            default=str,
+        ),
+    )
 
 
 def _consume_manual_stop_request(run_id: int) -> bool:
@@ -289,6 +345,7 @@ def _run_claude_subprocess(
             start_new_session=True,
         )
         _register_active_proc(run_id, proc)
+        _register_run_timeout(run_id, timeout_seconds)
 
         try:
             def read_stdout() -> None:
@@ -313,26 +370,30 @@ def _run_claude_subprocess(
             started = time.monotonic()
             sigterm_sent = False
             sigkill_sent = False
-            sigterm_at = timeout_seconds + sigterm_grace_seconds
-            sigkill_at = timeout_seconds + sigkill_grace_seconds
+            enforced_timeout_seconds = timeout_seconds
 
             while proc.poll() is None:
                 elapsed = time.monotonic() - started
+                current_timeout = get_active_run_timeout(run_id) or timeout_seconds
+                sigterm_at = current_timeout + sigterm_grace_seconds
+                sigkill_at = current_timeout + sigkill_grace_seconds
                 if elapsed >= sigkill_at:
+                    enforced_timeout_seconds = current_timeout
                     log_file.write(
                         f"\n=== TIMEOUT ENFORCEMENT ===\n"
                         f"SIGKILL sent at {elapsed:.1f}s "
-                        f"(configured timeout {timeout_seconds}s + {sigkill_grace_seconds}s)\n"
+                        f"(configured timeout {current_timeout}s + {sigkill_grace_seconds}s)\n"
                     )
                     log_file.flush()
                     _signal_process_group(proc, signal.SIGKILL)
                     sigkill_sent = True
                     break
                 if elapsed >= sigterm_at and not sigterm_sent:
+                    enforced_timeout_seconds = current_timeout
                     log_file.write(
                         f"\n=== TIMEOUT ENFORCEMENT ===\n"
                         f"SIGTERM sent at {elapsed:.1f}s "
-                        f"(configured timeout {timeout_seconds}s + {sigterm_grace_seconds}s)\n"
+                        f"(configured timeout {current_timeout}s + {sigterm_grace_seconds}s)\n"
                     )
                     log_file.flush()
                     _signal_process_group(proc, signal.SIGTERM)
@@ -346,6 +407,7 @@ def _run_claude_subprocess(
             duration_seconds = time.monotonic() - started
         finally:
             _unregister_active_proc(run_id)
+            _unregister_run_timeout(run_id)
 
     return ClaudeSubprocessResult(
         returncode=returncode,
@@ -354,6 +416,7 @@ def _run_claude_subprocess(
         duration_seconds=duration_seconds,
         sigterm_sent=sigterm_sent,
         sigkill_sent=sigkill_sent,
+        enforced_timeout_seconds=enforced_timeout_seconds,
     )
 
 
@@ -581,11 +644,13 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         error_message = None
         exit_note = None
 
+        enforced_timeout_seconds = result.enforced_timeout_seconds
+
         if result.sigkill_sent:
             status = RunStatus.failed
             error_message = RUN_FAILED_MESSAGE
             exit_note = _enforcement_note(
-                timeout_seconds,
+                enforced_timeout_seconds,
                 sigterm_grace_seconds=sigterm_grace_seconds,
                 sigkill_grace_seconds=sigkill_grace_seconds,
                 sigterm_sent=sigterm_sent,
@@ -599,7 +664,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                     exit_note = f"{exit_note}; summary.md written after SIGTERM"
                 else:
                     exit_note = (
-                        f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                        f"{_enforcement_note(enforced_timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
                         "summary.md written after SIGTERM"
                     )
             else:
@@ -609,7 +674,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                     exit_note = f"{exit_note}; summary.md missing"
                 else:
                     exit_note = (
-                        f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
+                        f"{_enforcement_note(enforced_timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
                         "summary.md missing"
                     )
         elif returncode != 0:

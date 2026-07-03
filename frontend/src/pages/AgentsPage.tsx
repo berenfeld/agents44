@@ -10,6 +10,7 @@ import {
   InlineTimeoutInput,
 } from "@/components/agents/AgentInlineCells";
 import { formatTimeoutSeconds, parseTimeoutInput } from "@/lib/timeout";
+import { describeTimeoutChangeImpact } from "@/lib/run-timeout";
 import { ConfirmModal } from "@/components/ui/modal";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { Button } from "@/components/ui/primitives";
@@ -34,6 +35,10 @@ export default function AgentsPage() {
   const [triggerAgent, setTriggerAgent] = useState<Agent | null>(null);
   const [draftCrond, setDraftCrond] = useState<Record<number, string>>({});
   const [draftTimeout, setDraftTimeout] = useState<Record<number, string>>({});
+  const [pendingTimeoutChange, setPendingTimeoutChange] = useState<{
+    agent: Agent;
+    newTimeoutSeconds: number;
+  } | null>(null);
 
   const sortAccessors = useMemo(
     () => ({
@@ -66,13 +71,23 @@ export default function AgentsPage() {
 
   const refreshRunningStatus = useCallback(async () => {
     const res = await api.get<Agent[]>("/agents");
-    const runningById = new Map(res.data.map((agent) => [agent.id, agent.is_running]));
+    const byId = new Map(res.data.map((agent) => [agent.id, agent]));
     setAgents((prev) =>
       prev.map((agent) => {
-        const isRunning = runningById.get(agent.id);
-        return isRunning === undefined || isRunning === agent.is_running
-          ? agent
-          : { ...agent, is_running: isRunning };
+        const fresh = byId.get(agent.id);
+        if (!fresh) return agent;
+        if (
+          fresh.is_running === agent.is_running &&
+          fresh.active_run?.id === agent.active_run?.id &&
+          fresh.active_run?.timeout_seconds === agent.active_run?.timeout_seconds
+        ) {
+          return agent;
+        }
+        return {
+          ...agent,
+          is_running: fresh.is_running,
+          active_run: fresh.active_run,
+        };
       }),
     );
   }, []);
@@ -114,7 +129,18 @@ export default function AgentsPage() {
       }
       return;
     }
+    if (agent.is_running && agent.active_run) {
+      setPendingTimeoutChange({ agent, newTimeoutSeconds: seconds });
+      return;
+    }
     await patchAgent(agent, { timeout_seconds: seconds });
+  };
+
+  const confirmTimeoutChange = async () => {
+    if (!pendingTimeoutChange) return;
+    const { agent, newTimeoutSeconds } = pendingTimeoutChange;
+    await patchAgent(agent, { timeout_seconds: newTimeoutSeconds });
+    setPendingTimeoutChange(null);
   };
 
   const revertTimeout = (agent: Agent) => {
@@ -123,6 +149,18 @@ export default function AgentsPage() {
       [agent.id]: formatTimeoutSeconds(agent.timeout_seconds),
     }));
   };
+
+  const pendingTimeoutImpact = useMemo(() => {
+    if (!pendingTimeoutChange?.agent.active_run) return null;
+    const lines = describeTimeoutChangeImpact(
+      pendingTimeoutChange.agent.name,
+      pendingTimeoutChange.agent.active_run,
+      pendingTimeoutChange.agent.timeout_seconds,
+      pendingTimeoutChange.newTimeoutSeconds,
+    );
+    const immediate = lines.some((line) => line.includes("immediately"));
+    return { lines, immediate };
+  }, [pendingTimeoutChange]);
 
   return (
     <div className="space-y-4">
@@ -290,6 +328,29 @@ export default function AgentsPage() {
           await api.post("/agents", values);
           await load();
         }}
+      />
+
+      <ConfirmModal
+        open={!!pendingTimeoutChange}
+        onOpenChange={(open) => {
+          if (!open && pendingTimeoutChange) {
+            revertTimeout(pendingTimeoutChange.agent);
+            setPendingTimeoutChange(null);
+          }
+        }}
+        title="Update timeout for running agent?"
+        confirmLabel={pendingTimeoutImpact?.immediate ? "Update and stop" : "Update timeout"}
+        destructive={!!pendingTimeoutImpact?.immediate}
+        description={
+          pendingTimeoutImpact ? (
+            <div className="space-y-2">
+              {pendingTimeoutImpact.lines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          ) : null
+        }
+        onConfirm={confirmTimeoutChange}
       />
 
       <ConfirmModal

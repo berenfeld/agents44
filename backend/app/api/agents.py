@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request
 from marshmallow import EXCLUDE, Schema, ValidationError, fields, pre_load, validate
 from sqlalchemy import select
@@ -10,6 +12,7 @@ from app.models.run_status import RunStatus
 from app.services.model_registry import validate_model
 from app.services.scheduler import sync_scheduler_jobs
 from app.services.timeout import parse_timeout_input
+from app.services.params import get_timeout_sigkill_grace_seconds, get_timeout_sigterm_grace_seconds
 from app.services.db_provisioning import (
     create_agent_role,
     drop_agent_db_access,
@@ -65,13 +68,47 @@ def _active_run_agent_ids() -> set[int]:
     return set(rows)
 
 
+def _running_runs_by_agent() -> dict[int, SystemAgentRun]:
+    runs = SystemAgentRun.query.filter_by(status=RunStatus.running).all()
+    return {run.agent_id: run for run in runs}
+
+
+def _active_run_dict(run: SystemAgentRun, agent: SystemAgent) -> dict:
+    from app.services.agent_runner import get_active_run_timeout
+
+    elapsed = (datetime.now(timezone.utc) - run.started_at).total_seconds() if run.started_at else 0
+    timeout = get_active_run_timeout(run.id)
+    if timeout is None:
+        timeout = agent.timeout_seconds
+    sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
+    sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
+    return {
+        "id": run.id,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "elapsed_seconds": round(elapsed, 1),
+        "timeout_seconds": timeout,
+        "timeout_sigterm_grace_seconds": sigterm_grace_seconds,
+        "timeout_sigkill_grace_seconds": sigkill_grace_seconds,
+        "timeout_sigterm_at_seconds": timeout + sigterm_grace_seconds,
+        "timeout_sigkill_at_seconds": timeout + sigkill_grace_seconds,
+    }
+
+
 @agents_bp.get("")
 @api_endpoint
 @login_required
 def list_agents():
     agents = SystemAgent.query.order_by(SystemAgent.name).all()
     active_ids = _active_run_agent_ids()
-    return jsonify([{**agent.to_dict(), "is_running": agent.id in active_ids} for agent in agents])
+    running_runs = _running_runs_by_agent()
+    payload = []
+    for agent in agents:
+        item = {**agent.to_dict(), "is_running": agent.id in active_ids}
+        running_run = running_runs.get(agent.id)
+        if running_run:
+            item["active_run"] = _active_run_dict(running_run, agent)
+        payload.append(item)
+    return jsonify(payload)
 
 
 @agents_bp.post("")
@@ -131,9 +168,14 @@ def update_agent(agent_id: int):
         raise APIClientError("Department cannot be changed", 400)
     if "model" in data and not validate_model(data["model"]):
         raise APIClientError("Unsupported model", 400)
+    previous_timeout = agent.timeout_seconds
     for key, value in data.items():
         setattr(agent, key, value)
     db.session.commit()
+    if "timeout_seconds" in data and data["timeout_seconds"] != previous_timeout:
+        from app.services.agent_runner import sync_agent_run_timeout
+
+        sync_agent_run_timeout(agent_id, data["timeout_seconds"])
     sync_scheduler_jobs()
     return jsonify(agent.to_dict())
 
