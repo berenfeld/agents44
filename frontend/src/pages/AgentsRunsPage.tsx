@@ -10,6 +10,7 @@ import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { cn, formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
 import { countMatches } from "@/lib/search-highlight";
+import { formatRunLog } from "@/lib/format-run-log";
 import { ConfirmModal, Modal } from "@/components/ui/modal";
 import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
 import {
@@ -173,9 +174,16 @@ export default function AgentsRunsPage() {
     [modalRunId, runs],
   );
 
+  const modalDisplayContent = useMemo(() => {
+    if (modalKind === "log") {
+      return formatRunLog(modalContent);
+    }
+    return modalContent;
+  }, [modalContent, modalKind]);
+
   const modalMatchCount = useMemo(
-    () => countMatches(modalContent, modalSearch),
-    [modalContent, modalSearch],
+    () => countMatches(modalDisplayContent, modalSearch),
+    [modalDisplayContent, modalSearch],
   );
 
   const modalLive =
@@ -537,8 +545,10 @@ export default function AgentsRunsPage() {
           ) : null
         }
       >
-        {modalKind === "log" || modalKind === "prompt" ? (
+        {modalKind === "log" ? (
           <RunLogViewer content={modalContent} search={modalSearch} autoScroll={modalLogLive && logAutoScroll} />
+        ) : modalKind === "prompt" ? (
+          <RunLogViewer content={modalContent} search={modalSearch} format={false} />
         ) : modalKind === "summary" ? (
           <RunSummaryViewer content={modalContent} search={modalSearch} />
         ) : null}
