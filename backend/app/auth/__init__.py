@@ -69,12 +69,20 @@ def auth_google():
         access_type="offline", include_granted_scopes="true", prompt="consent"
     )
     session["oauth_state"] = state
+    session["oauth_code_verifier"] = flow.code_verifier
     return redirect(authorization_url)
 
 
 def auth_callback():
+    code_verifier = session.pop("oauth_code_verifier", None)
+    if not code_verifier:
+        raise APIClientError("OAuth session expired, please sign in again", 400)
     flow = _oauth_flow()
-    flow.fetch_token(authorization_response=request.url)
+    flow.code_verifier = code_verifier
+    # Use configured redirect URI (HTTPS) — request.url behind nginx is http://127.0.0.1:5000/...
+    query = request.query_string.decode()
+    callback_url = f"{Config.OAUTH_REDIRECT_URI}?{query}" if query else Config.OAUTH_REDIRECT_URI
+    flow.fetch_token(authorization_response=callback_url)
     credentials = flow.credentials
     idinfo = id_token.verify_oauth2_token(
         credentials.id_token,
