@@ -7,7 +7,6 @@ psycopg2-binary>=2.9
 python-dotenv>=1.0
 apscheduler>=3.10
 google-auth>=2.29
-google-auth-oauthlib>=1.2
 requests>=2.31
 marshmallow>=3.21
 gunicorn>=22.0

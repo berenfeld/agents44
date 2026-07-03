@@ -56,7 +56,7 @@ Tail Flask and frontend logs:
 
 ### Dev auth
 
-- **Google OAuth**: set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and add emails to `ALLOWED_EMAILS` in `system_params`
+- **Google Sign-In**: set `GOOGLE_CLIENT_ID` and add emails to `ALLOWED_EMAILS` in `system_params`
 - **Dev login**: set `DEV_LOGIN_EMAIL` (non-empty enables dev login; e.g. `admin@catch44.co.il`) and `DEV_LOGIN_PASSWORD` in the project `.env`. Leave `DEV_LOGIN_EMAIL` empty in production unless you need password-based dev access.
 
 ## Project layout

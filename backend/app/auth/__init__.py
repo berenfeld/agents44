@@ -1,11 +1,9 @@
 import logging
-import os
 from functools import wraps
 
-from flask import jsonify, redirect, request, session
+from flask import jsonify, request, session
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
-from google_auth_oauthlib.flow import Flow
 
 from app.config import Config
 from app.errors import APIClientError
@@ -13,7 +11,6 @@ from app.services.params import get_param_json
 
 logger = logging.getLogger(__name__)
 
-OAUTH_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 
 def dev_login_allowed() -> bool:
     return bool(Config.DEV_LOGIN_EMAIL)
@@ -35,19 +32,12 @@ def dev_login():
     return jsonify({"authenticated": True, "email": email})
 
 
-def _oauth_flow() -> Flow:
-    client_config = {
-        "web": {
-            "client_id": Config.GOOGLE_CLIENT_ID,
-            "client_secret": Config.GOOGLE_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
+def google_login_config():
+    return jsonify(
+        {
+            "enabled": bool(Config.GOOGLE_CLIENT_ID),
+            "clientId": Config.GOOGLE_CLIENT_ID,
         }
-    }
-    return Flow.from_client_config(
-        client_config,
-        scopes=OAUTH_SCOPES,
-        redirect_uri=Config.OAUTH_REDIRECT_URI,
     )
 
 
@@ -62,39 +52,29 @@ def login_required(f):
 
 
 def auth_google():
-    if not Config.GOOGLE_CLIENT_ID or not Config.GOOGLE_CLIENT_SECRET:
-        raise APIClientError("Google OAuth is not configured", 500)
-    flow = _oauth_flow()
-    authorization_url, state = flow.authorization_url(
-        access_type="offline", include_granted_scopes="true", prompt="consent"
-    )
-    session["oauth_state"] = state
-    session["oauth_code_verifier"] = flow.code_verifier
-    return redirect(authorization_url)
-
-
-def auth_callback():
-    code_verifier = session.pop("oauth_code_verifier", None)
-    if not code_verifier:
-        raise APIClientError("OAuth session expired, please sign in again", 400)
-    flow = _oauth_flow()
-    flow.code_verifier = code_verifier
-    # Use configured redirect URI (HTTPS) — request.url behind nginx is http://127.0.0.1:5000/...
-    query = request.query_string.decode()
-    callback_url = f"{Config.OAUTH_REDIRECT_URI}?{query}" if query else Config.OAUTH_REDIRECT_URI
-    flow.fetch_token(authorization_response=callback_url)
-    credentials = flow.credentials
-    idinfo = id_token.verify_oauth2_token(
-        credentials.id_token,
-        google_requests.Request(),
-        Config.GOOGLE_CLIENT_ID,
-    )
+    if not Config.GOOGLE_CLIENT_ID:
+        raise APIClientError("Google login is not configured", 500)
+    payload = request.get_json(force=True) or {}
+    token = payload.get("credential") or payload.get("id_token")
+    if not token:
+        raise APIClientError("Missing Google credential", 400)
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            Config.GOOGLE_CLIENT_ID,
+        )
+    except ValueError as exc:
+        logger.warning("Google token verification failed: %s", exc)
+        raise APIClientError("Invalid Google credential", 401) from exc
     email = idinfo.get("email")
+    if not email:
+        raise APIClientError("Google account has no email", 400)
     allowed = get_param_json("ALLOWED_EMAILS", []) or []
     if allowed and email not in allowed:
         raise APIClientError("Email is not allowed", 403)
     session["user_email"] = email
-    return redirect(os.getenv("FRONTEND_URL", "http://localhost:3000/"))
+    return jsonify({"authenticated": True, "email": email})
 
 
 def auth_me():

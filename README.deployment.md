@@ -89,11 +89,9 @@ WORKSPACE_PATH=/opt/agents44/workspace
 RUNTIME_DIR=/opt/agents44/runtime
 LOG_DIR=/opt/agents44/logs
 FRONTEND_URL=https://agents.catch44.co.il
-OAUTH_REDIRECT_URI=https://agents.catch44.co.il/api/auth/callback
 
 ANTHROPIC_API_KEY=<key>
 GOOGLE_CLIENT_ID=<id>
-GOOGLE_CLIENT_SECRET=<secret>
 SMTP_APP_PASSWORD=<app-password>
 ```
 
@@ -105,7 +103,10 @@ After changing `PSQL_PASSWORD` in `.env`, sync it to PostgreSQL:
 ssh -i "$KEY" "$HOST" 'sudo bash /opt/agents44/deploy/scripts/sync-psql-password.sh'
 ```
 
-Also add `https://agents.catch44.co.il/api/auth/callback` as an authorized redirect URI in Google Cloud Console.
+In Google Cloud Console (OAuth 2.0 Web client), add **Authorized JavaScript origins**:
+
+- `https://agents.catch44.co.il`
+- `http://localhost:3000` (local dev)
 
 ## GitHub Actions deploy
 
@@ -212,4 +213,3 @@ ssh -i "$KEY" "$HOST" 'sudo -u postgres psql -d agents44'
 |-----|---------|
 | https://agents.catch44.co.il | Frontend UI |
 | https://agents.catch44.co.il/api/health | API health check |
-| https://agents.catch44.co.il/api/auth/callback | Google OAuth callback |

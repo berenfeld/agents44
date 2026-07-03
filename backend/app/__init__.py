@@ -78,7 +78,7 @@ def create_app() -> Flask:
     def enforce_json_for_mutations():
         if not request.path.startswith("/api/"):
             return None
-        if request.path.startswith("/api/auth/google") or request.path.startswith("/api/auth/callback"):
+        if request.path.startswith("/api/auth/google"):
             return None
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             if request.content_length and request.mimetype != "application/json":

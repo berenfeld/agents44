@@ -1,12 +1,12 @@
 from flask import Blueprint, jsonify, request
 
 from app.auth import (
-    auth_callback,
     auth_google,
     auth_logout,
     auth_me,
     dev_login,
     dev_login_config,
+    google_login_config,
     login_required,
 )
 from app.errors import api_endpoint
@@ -17,18 +17,16 @@ auth_bp = Blueprint("auth", __name__)
 params_bp = Blueprint("system_params", __name__)
 
 
+@auth_bp.get("/google/config")
 @api_endpoint
-def _google():
+def google_config_route():
+    return google_login_config()
+
+
+@auth_bp.post("/google")
+@api_endpoint
+def google_route():
     return auth_google()
-
-
-@api_endpoint
-def _callback():
-    return auth_callback()
-
-
-auth_bp.add_url_rule("/google", view_func=_google, methods=["GET"])
-auth_bp.add_url_rule("/callback", view_func=_callback, methods=["GET"])
 
 
 @auth_bp.get("/me")
