@@ -44,8 +44,14 @@ type RowQueryState = {
 const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
 const DEFAULT_ROW_LIMIT = 100;
 const GRID_ROW_HEIGHT = 35;
-const COLUMN_VISIBILITY_PREFIX = "agent-db-columns:";
+const COLUMN_PREFS_PREFIX = "agent-db-columns:";
 const SCHEMA_COLLAPSE_KEY = "agent-db-schema-collapsed";
+const COLUMN_MIN_WIDTH = 48;
+const COLUMN_MAX_WIDTH = 480;
+const SELECT_COLUMN_WIDTH = 35;
+const COLUMN_CELL_PADDING = 20;
+const COLUMN_HEADER_EXTRA = 18;
+const DENSE_WIDTH_SAMPLE_ROWS = 50;
 const ALLOWED_FILTER_OPS = new Set<string>([
   "eq",
   "ne",
@@ -228,24 +234,115 @@ function buildRowQueryParams(query: RowQueryState): AgentDbRowsQuery {
   return params;
 }
 
+type TableColumnPrefs = {
+  visible: string[];
+  widths?: Record<string, number>;
+};
+
+let textMeasureCanvas: HTMLCanvasElement | null = null;
+
+function measureTextWidth(text: string): number {
+  if (typeof document === "undefined") {
+    return text.length * 7;
+  }
+  textMeasureCanvas ??= document.createElement("canvas");
+  const context = textMeasureCanvas.getContext("2d");
+  if (!context) {
+    return text.length * 7;
+  }
+  context.font = '0.875rem ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"';
+  return context.measureText(text).width;
+}
+
+function columnHeaderLabel(col: AgentDbColumn): string {
+  return col.primary_key ? `${col.name} (PK)` : col.name;
+}
+
+function clampColumnWidth(width: number): number {
+  return Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, Math.ceil(width)));
+}
+
+function computeDenseColumnWidth(
+  col: AgentDbColumn,
+  rows: readonly GridRow[],
+  headerLabel: string,
+): number {
+  let maxWidth = measureTextWidth(headerLabel) + COLUMN_CELL_PADDING + COLUMN_HEADER_EXTRA;
+  const sampleRows = rows.slice(0, DENSE_WIDTH_SAMPLE_ROWS);
+  for (const row of sampleRows) {
+    const cellText = formatCell(row[col.name]);
+    maxWidth = Math.max(maxWidth, measureTextWidth(cellText) + COLUMN_CELL_PADDING);
+  }
+  return clampColumnWidth(maxWidth);
+}
+
+function computeDenseColumnWidths(
+  schema: AgentDbSchema,
+  rows: readonly GridRow[],
+  visibleColumns: ReadonlySet<string>,
+): Record<string, number> {
+  const widths: Record<string, number> = {};
+  for (const col of schema.columns) {
+    if (!visibleColumns.has(col.name)) {
+      continue;
+    }
+    widths[col.name] = computeDenseColumnWidth(col, rows, columnHeaderLabel(col));
+  }
+  return widths;
+}
+
+function expandColumnWidthsToFill(
+  baseWidths: Readonly<Record<string, number>>,
+  orderedVisibleNames: readonly string[],
+  gridWidth: number,
+): Record<string, number> {
+  if (gridWidth <= 0 || orderedVisibleNames.length === 0) {
+    return { ...baseWidths };
+  }
+
+  const resolved = orderedVisibleNames.map((name) => baseWidths[name] ?? COLUMN_MIN_WIDTH);
+  const dataTotal = resolved.reduce((sum, width) => sum + width, 0);
+  const spare = gridWidth - SELECT_COLUMN_WIDTH - dataTotal;
+  if (spare <= 0) {
+    return Object.fromEntries(orderedVisibleNames.map((name, index) => [name, resolved[index]]));
+  }
+
+  const expanded: Record<string, number> = {};
+  let distributed = 0;
+  for (let index = 0; index < orderedVisibleNames.length; index++) {
+    const name = orderedVisibleNames[index];
+    const base = resolved[index];
+    const extra =
+      index === orderedVisibleNames.length - 1
+        ? spare - distributed
+        : Math.floor((base / dataTotal) * spare);
+    distributed += extra;
+    expanded[name] = Math.max(COLUMN_MIN_WIDTH, base + extra);
+  }
+  return expanded;
+}
+
 function buildColumns(
   schema: AgentDbSchema,
   sortBy: string | null,
   sortDir: SortDirection,
   onSort: (column: string) => void,
   visibleColumns: ReadonlySet<string>,
+  columnWidths: Readonly<Record<string, number>>,
 ): Column<GridRow>[] {
   const dataColumns = schema.columns
     .filter((col) => visibleColumns.has(col.name))
     .map((col: AgentDbColumn) => {
     const editable = !(col.primary_key && col.autoincrement);
     const active = sortBy === col.name;
+    const headerLabel = columnHeaderLabel(col);
     return {
       key: col.name,
-      name: col.primary_key ? `${col.name} (PK)` : col.name,
+      name: headerLabel,
       editable,
       resizable: true,
-      minWidth: 120,
+      width: columnWidths[col.name] ?? COLUMN_MIN_WIDTH,
+      minWidth: COLUMN_MIN_WIDTH,
       renderHeaderCell: () => (
         <button
           type="button"
@@ -404,41 +501,82 @@ function PanelLeftCloseIcon() {
   );
 }
 
-function readVisibleColumns(tableName: string, columnNames: string[]): Set<string> {
+function ColumnsFitIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+      <path d="M4 6h16M4 12h10M4 18h14" strokeLinecap="round" />
+      <path d="M18 10v4" strokeLinecap="round" />
+      <path d="M16 12h4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function readTableColumnPrefs(
+  tableName: string,
+  columnNames: string[],
+): { visible: Set<string>; widths: Record<string, number> } {
+  const fallback = { visible: new Set(columnNames), widths: {} as Record<string, number> };
   try {
-    const raw = localStorage.getItem(`${COLUMN_VISIBILITY_PREFIX}${tableName}`);
+    const raw = localStorage.getItem(`${COLUMN_PREFS_PREFIX}${tableName}`);
     if (!raw) {
-      return new Set(columnNames);
+      return fallback;
     }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return new Set(columnNames);
-    }
+    const parsed: unknown = JSON.parse(raw);
     const allowed = new Set(columnNames);
-    const saved = parsed.filter((name): name is string => typeof name === "string" && allowed.has(name));
-    return saved.length > 0 ? new Set(saved) : new Set(columnNames);
+    if (Array.isArray(parsed)) {
+      const saved = parsed.filter((name): name is string => typeof name === "string" && allowed.has(name));
+      return {
+        visible: saved.length > 0 ? new Set(saved) : new Set(columnNames),
+        widths: {},
+      };
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return fallback;
+    }
+    const prefs = parsed as TableColumnPrefs;
+    const visibleRaw = Array.isArray(prefs.visible) ? prefs.visible : columnNames;
+    const savedVisible = visibleRaw.filter(
+      (name): name is string => typeof name === "string" && allowed.has(name),
+    );
+    const widths: Record<string, number> = {};
+    if (prefs.widths && typeof prefs.widths === "object") {
+      for (const [name, width] of Object.entries(prefs.widths)) {
+        if (allowed.has(name) && typeof width === "number" && Number.isFinite(width)) {
+          widths[name] = clampColumnWidth(width);
+        }
+      }
+    }
+    return {
+      visible: savedVisible.length > 0 ? new Set(savedVisible) : new Set(columnNames),
+      widths,
+    };
   } catch {
-    return new Set(columnNames);
+    return fallback;
   }
 }
 
-function writeVisibleColumns(tableName: string, visibleColumns: ReadonlySet<string>) {
+function writeTableColumnPrefs(
+  tableName: string,
+  visibleColumns: ReadonlySet<string>,
+  columnWidths: Readonly<Record<string, number>>,
+) {
   try {
-    localStorage.setItem(
-      `${COLUMN_VISIBILITY_PREFIX}${tableName}`,
-      JSON.stringify([...visibleColumns]),
-    );
+    const payload: TableColumnPrefs = {
+      visible: [...visibleColumns],
+      widths: columnWidths,
+    };
+    localStorage.setItem(`${COLUMN_PREFS_PREFIX}${tableName}`, JSON.stringify(payload));
   } catch {
     // ignore storage errors
   }
 }
 
-function migrateVisibleColumns(oldName: string, newName: string) {
+function migrateTableColumnPrefs(oldName: string, newName: string) {
   try {
-    const key = `${COLUMN_VISIBILITY_PREFIX}${oldName}`;
+    const key = `${COLUMN_PREFS_PREFIX}${oldName}`;
     const raw = localStorage.getItem(key);
     if (raw) {
-      localStorage.setItem(`${COLUMN_VISIBILITY_PREFIX}${newName}`, raw);
+      localStorage.setItem(`${COLUMN_PREFS_PREFIX}${newName}`, raw);
       localStorage.removeItem(key);
     }
   } catch {
@@ -500,8 +638,14 @@ export default function AgentDatabasePage() {
     filterValue: query.filterValue,
   });
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set());
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [gridContainerWidth, setGridContainerWidth] = useState(0);
+  const [gridLayoutKey, setGridLayoutKey] = useState(0);
   const [collapsedSchemas, setCollapsedSchemas] = useState<Set<string>>(() => readCollapsedSchemas());
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  const hasSavedColumnWidths = useRef(false);
+  const denseWidthsKeyRef = useRef<string | null>(null);
 
   const setTableAndQuery = useCallback(
     (table: string | null, nextQuery: RowQueryState, options?: { replace?: boolean }) => {
@@ -602,18 +746,107 @@ export default function AgentDatabasePage() {
       return;
     }
     const columnNames = schema.columns.map((col) => col.name);
-    setVisibleColumns(readVisibleColumns(selectedTable, columnNames));
+    const prefs = readTableColumnPrefs(selectedTable, columnNames);
+    setVisibleColumns(prefs.visible);
+    setColumnWidths(prefs.widths);
+    hasSavedColumnWidths.current = Object.keys(prefs.widths).length > 0;
+    denseWidthsKeyRef.current = null;
+    setGridLayoutKey((value) => value + 1);
   }, [schema, selectedTable]);
+
+  useEffect(() => {
+    if (!schema || !selectedTable || schema.qualified_name !== selectedTable || hasSavedColumnWidths.current) {
+      return;
+    }
+    if (visibleColumns.size === 0) {
+      return;
+    }
+    const layoutKey = `${selectedTable}:${[...visibleColumns].sort().join(",")}`;
+    if (denseWidthsKeyRef.current === layoutKey) {
+      return;
+    }
+    denseWidthsKeyRef.current = layoutKey;
+    setColumnWidths(computeDenseColumnWidths(schema, rows, visibleColumns));
+    setGridLayoutKey((value) => value + 1);
+  }, [schema, selectedTable, rows, visibleColumns]);
 
   const handleVisibleColumnsChange = useCallback(
     (next: Set<string>) => {
       setVisibleColumns(next);
+      if (!schema) {
+        if (selectedTable) {
+          writeTableColumnPrefs(selectedTable, next, columnWidths);
+        }
+        return;
+      }
+
+      let nextWidths = columnWidths;
+      if (!hasSavedColumnWidths.current) {
+        nextWidths = computeDenseColumnWidths(schema, rows, next);
+        denseWidthsKeyRef.current = `${selectedTable}:${[...next].sort().join(",")}`;
+        setGridLayoutKey((value) => value + 1);
+      } else {
+        const dense = computeDenseColumnWidths(schema, rows, next);
+        let changed = false;
+        const merged = { ...columnWidths };
+        for (const name of next) {
+          if (merged[name] === undefined) {
+            merged[name] = dense[name] ?? COLUMN_MIN_WIDTH;
+            changed = true;
+          }
+        }
+        if (changed) {
+          nextWidths = merged;
+          setGridLayoutKey((value) => value + 1);
+        }
+      }
+      setColumnWidths(nextWidths);
       if (selectedTable) {
-        writeVisibleColumns(selectedTable, next);
+        writeTableColumnPrefs(selectedTable, next, nextWidths);
       }
     },
-    [selectedTable],
+    [columnWidths, rows, schema, selectedTable],
   );
+
+  const handleColumnResize = useCallback(
+    (idx: number, width: number) => {
+      if (!schema || idx <= 0) {
+        return;
+      }
+      const visibleCols = schema.columns.filter((col) => visibleColumns.has(col.name));
+      const col = visibleCols[idx - 1];
+      if (!col) {
+        return;
+      }
+      const nextWidth = clampColumnWidth(width);
+      setColumnWidths((current) => {
+        if (current[col.name] === nextWidth) {
+          return current;
+        }
+        const next = { ...current, [col.name]: nextWidth };
+        if (selectedTable) {
+          writeTableColumnPrefs(selectedTable, visibleColumns, next);
+        }
+        hasSavedColumnWidths.current = true;
+        return next;
+      });
+    },
+    [schema, selectedTable, visibleColumns],
+  );
+
+  const autoFitAllColumns = useCallback(() => {
+    if (!schema) {
+      return;
+    }
+    const nextWidths = computeDenseColumnWidths(schema, rows, visibleColumns);
+    setColumnWidths(nextWidths);
+    denseWidthsKeyRef.current = `${selectedTable}:${[...visibleColumns].sort().join(",")}`;
+    setGridLayoutKey((value) => value + 1);
+    if (selectedTable) {
+      writeTableColumnPrefs(selectedTable, visibleColumns, nextWidths);
+      hasSavedColumnWidths.current = true;
+    }
+  }, [rows, schema, selectedTable, visibleColumns]);
 
   const toggleSidebar = useCallback(() => {
     setSearchParams(
@@ -646,12 +879,36 @@ export default function AgentDatabasePage() {
     [patchQuery, query.sortBy, query.sortDir],
   );
 
+  useEffect(() => {
+    const element = gridContainerRef.current;
+    if (!element) {
+      return;
+    }
+    const updateWidth = () => {
+      setGridContainerWidth(element.clientWidth);
+    };
+    updateWidth();
+    const resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, [loading, schema, selectedTable, visibleColumns.size, sidebarCollapsed]);
+
+  const orderedVisibleColumnNames = useMemo(
+    () => schema?.columns.filter((col) => visibleColumns.has(col.name)).map((col) => col.name) ?? [],
+    [schema, visibleColumns],
+  );
+
+  const displayColumnWidths = useMemo(
+    () => expandColumnWidthsToFill(columnWidths, orderedVisibleColumnNames, gridContainerWidth),
+    [columnWidths, orderedVisibleColumnNames, gridContainerWidth],
+  );
+
   const columns = useMemo(
     () =>
       schema
-        ? buildColumns(schema, query.sortBy, query.sortDir, handleSort, visibleColumns)
+        ? buildColumns(schema, query.sortBy, query.sortDir, handleSort, visibleColumns, displayColumnWidths)
         : [],
-    [schema, query.sortBy, query.sortDir, handleSort, visibleColumns],
+    [schema, query.sortBy, query.sortDir, handleSort, visibleColumns, displayColumnWidths],
   );
 
   const projectionColumns = useMemo(
@@ -832,7 +1089,7 @@ export default function AgentDatabasePage() {
         tableApiPath(tableToRename.qualified_name),
         { name: trimmed },
       );
-      migrateVisibleColumns(tableToRename.qualified_name, res.data.qualified_name);
+      migrateTableColumnPrefs(tableToRename.qualified_name, res.data.qualified_name);
       await loadTables();
       if (selectedTable === tableToRename.qualified_name) {
         setTableAndQuery(res.data.qualified_name, query);
@@ -1091,6 +1348,14 @@ export default function AgentDatabasePage() {
                     onVisibleColumnsChange={handleVisibleColumnsChange}
                     disabled={loading || busy}
                   />
+                  <ToolbarIconButton
+                    title="Auto-fit all column widths"
+                    variant="outline"
+                    onClick={autoFitAllColumns}
+                    disabled={loading || busy || visibleColumns.size === 0}
+                  >
+                    <ColumnsFitIcon />
+                  </ToolbarIconButton>
                 </>
               ) : null}
             </div>
@@ -1226,7 +1491,7 @@ export default function AgentDatabasePage() {
             </div>
           </div>
 
-          <div className="hidden rounded-lg border bg-white md:block">
+          <div ref={gridContainerRef} className="hidden rounded-lg border bg-white md:block">
             {loading ? (
               <div className="p-8 text-sm text-slate-500">Loading…</div>
             ) : schema && selectedTable ? (
@@ -1236,6 +1501,7 @@ export default function AgentDatabasePage() {
                 </div>
               ) : (
               <DataGrid
+                key={`${selectedTable}-${gridLayoutKey}`}
                 className="rdg-light w-full text-sm"
                 style={{ blockSize: gridBlockSize }}
                 rowHeight={GRID_ROW_HEIGHT}
@@ -1245,6 +1511,7 @@ export default function AgentDatabasePage() {
                 selectedRows={selectedRows}
                 onSelectedRowsChange={setSelectedRows}
                 onRowsChange={handleRowsChange}
+                onColumnResize={handleColumnResize}
               />
               )
             ) : (
@@ -1307,7 +1574,8 @@ export default function AgentDatabasePage() {
           {schema ? (
             <p className="text-xs text-slate-500">
               Primary keys: {schema.primary_keys.join(", ") || "(none)"}. Double-click a cell to edit on desktop; on
-              mobile, edit fields directly in each card.
+              mobile, edit fields directly in each card. Double-click a column resize handle to auto-fit that column, or
+              use the fit-columns toolbar button for all visible columns.
             </p>
           ) : null}
       </SplitPanelLayout>
