@@ -44,6 +44,9 @@ type RowQueryState = {
 const ROW_LIMIT_OPTIONS = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000, 10000] as const;
 const DEFAULT_ROW_LIMIT = 100;
 const GRID_ROW_HEIGHT = 35;
+const GRID_HEADER_HEIGHT = 35;
+const GRID_HORIZONTAL_SCROLLBAR_HEIGHT = 18;
+const GRID_MIN_BLOCK_SIZE = 140;
 const COLUMN_PREFS_PREFIX = "agent-db-columns:";
 const SCHEMA_COLLAPSE_KEY = "agent-db-schema-collapsed";
 const COLUMN_MIN_WIDTH = 48;
@@ -928,7 +931,11 @@ export default function AgentDatabasePage() {
   );
 
   const gridBlockSize = useMemo(
-    () => Math.max(GRID_ROW_HEIGHT * 2, (rows.length + 1) * GRID_ROW_HEIGHT),
+    () =>
+      Math.max(
+        GRID_MIN_BLOCK_SIZE,
+        GRID_HEADER_HEIGHT + Math.max(rows.length, 1) * GRID_ROW_HEIGHT + GRID_HORIZONTAL_SCROLLBAR_HEIGHT,
+      ),
     [rows.length],
   );
 
