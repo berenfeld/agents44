@@ -41,7 +41,7 @@ type RowQueryState = {
   filterValue: string;
 };
 
-const ROW_LIMIT_OPTIONS = [50, 100, 200, 500, 1000, 2000] as const;
+const ROW_LIMIT_OPTIONS = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000, 10000] as const;
 const DEFAULT_ROW_LIMIT = 100;
 const GRID_ROW_HEIGHT = 35;
 const COLUMN_PREFS_PREFIX = "agent-db-columns:";
@@ -1310,8 +1310,8 @@ export default function AgentDatabasePage() {
           </>
         }
       >
-          <div className="flex flex-col gap-2 rounded-lg border bg-white px-2 py-1.5 md:flex-row md:flex-nowrap md:items-center md:gap-1.5 md:overflow-x-auto">
-            <div className="flex flex-wrap items-center gap-1.5 md:contents">
+          <div className="space-y-2 rounded-lg border bg-white px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {sidebarCollapsed ? (
                 <ToolbarIconButton
                   title="Expand tables panel"
@@ -1330,6 +1330,16 @@ export default function AgentDatabasePage() {
               >
                 <RefreshIcon />
               </ToolbarIconButton>
+              {schema ? (
+                <ToolbarIconButton
+                  title="Auto-fit all column widths"
+                  variant="outline"
+                  onClick={autoFitAllColumns}
+                  disabled={loading || busy || visibleColumns.size === 0}
+                >
+                  <ColumnsFitIcon />
+                </ToolbarIconButton>
+              ) : null}
               <ToolbarIconButton
                 title={`Delete selected (${deleteCount})`}
                 variant="destructive"
@@ -1348,93 +1358,87 @@ export default function AgentDatabasePage() {
                     onVisibleColumnsChange={handleVisibleColumnsChange}
                     disabled={loading || busy}
                   />
-                  <ToolbarIconButton
-                    title="Auto-fit all column widths"
-                    variant="outline"
-                    onClick={autoFitAllColumns}
-                    disabled={loading || busy || visibleColumns.size === 0}
+                </>
+              ) : null}
+
+              {schema ? (
+                <>
+                  <ToolbarDivider className="hidden md:block" />
+                  <span className="shrink-0 text-xs font-medium text-slate-500">Filter</span>
+                  <select
+                    id="filter-column"
+                    aria-label="Filter column"
+                    value={draftFilter.filterColumn}
+                    onChange={(event) => {
+                      const filterColumn = event.target.value;
+                      const column = schema.columns.find((item) => item.name === filterColumn);
+                      const ops = column ? filterOpsForType(column.type) : [];
+                      setDraftFilter((current) => ({
+                        ...current,
+                        filterColumn,
+                        filterOp: ops.includes(current.filterOp as AgentDbFilterOp) ? current.filterOp : ops[0] ?? "",
+                      }));
+                    }}
+                    className={selectClassName("w-28 shrink-0")}
                   >
-                    <ColumnsFitIcon />
+                    <option value="">Column</option>
+                    {schema.columns.map((col) => (
+                      <option key={col.name} value={col.name}>
+                        {col.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    id="filter-op"
+                    aria-label="Filter operator"
+                    value={draftFilter.filterOp}
+                    onChange={(event) =>
+                      setDraftFilter((current) => ({
+                        ...current,
+                        filterOp: event.target.value as AgentDbFilterOp | "",
+                      }))
+                    }
+                    disabled={!draftFilter.filterColumn}
+                    className={selectClassName("w-20 shrink-0")}
+                  >
+                    <option value="">Op</option>
+                    {availableFilterOps.map((op) => (
+                      <option key={op} value={op}>
+                        {FILTER_OP_LABELS[op]}
+                      </option>
+                    ))}
+                  </select>
+                  <Input
+                    id="filter-value"
+                    aria-label="Filter value"
+                    value={draftFilter.filterValue}
+                    onChange={(event) =>
+                      setDraftFilter((current) => ({ ...current, filterValue: event.target.value }))
+                    }
+                    disabled={
+                      !draftFilter.filterColumn ||
+                      !draftFilter.filterOp ||
+                      NULL_FILTER_OPS.has(draftFilter.filterOp as AgentDbFilterOp)
+                    }
+                    placeholder="Value"
+                    className="h-8 w-24 shrink-0 px-2 text-sm"
+                  />
+                  <ToolbarIconButton title="Apply filter" onClick={applyFilter} disabled={!schema || loading}>
+                    <CheckIcon />
                   </ToolbarIconButton>
+                  {query.filterColumn && query.filterOp ? (
+                    <ToolbarIconButton title="Clear filter" variant="outline" onClick={clearFilter}>
+                      <XIcon />
+                    </ToolbarIconButton>
+                  ) : null}
                 </>
               ) : null}
             </div>
 
-            {schema ? (
-              <div className="flex flex-wrap items-center gap-1.5 md:contents">
-                <ToolbarDivider className="hidden md:block" />
-                <span className="shrink-0 text-xs font-medium text-slate-500">Filter</span>
-                <select
-                  id="filter-column"
-                  aria-label="Filter column"
-                  value={draftFilter.filterColumn}
-                  onChange={(event) => {
-                    const filterColumn = event.target.value;
-                    const column = schema.columns.find((item) => item.name === filterColumn);
-                    const ops = column ? filterOpsForType(column.type) : [];
-                    setDraftFilter((current) => ({
-                      ...current,
-                      filterColumn,
-                      filterOp: ops.includes(current.filterOp as AgentDbFilterOp) ? current.filterOp : ops[0] ?? "",
-                    }));
-                  }}
-                  className={selectClassName("w-28 shrink-0")}
-                >
-                  <option value="">Column</option>
-                  {schema.columns.map((col) => (
-                    <option key={col.name} value={col.name}>
-                      {col.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  id="filter-op"
-                  aria-label="Filter operator"
-                  value={draftFilter.filterOp}
-                  onChange={(event) =>
-                    setDraftFilter((current) => ({
-                      ...current,
-                      filterOp: event.target.value as AgentDbFilterOp | "",
-                    }))
-                  }
-                  disabled={!draftFilter.filterColumn}
-                  className={selectClassName("w-20 shrink-0")}
-                >
-                  <option value="">Op</option>
-                  {availableFilterOps.map((op) => (
-                    <option key={op} value={op}>
-                      {FILTER_OP_LABELS[op]}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  id="filter-value"
-                  aria-label="Filter value"
-                  value={draftFilter.filterValue}
-                  onChange={(event) =>
-                    setDraftFilter((current) => ({ ...current, filterValue: event.target.value }))
-                  }
-                  disabled={
-                    !draftFilter.filterColumn ||
-                    !draftFilter.filterOp ||
-                    NULL_FILTER_OPS.has(draftFilter.filterOp as AgentDbFilterOp)
-                  }
-                  placeholder="Value"
-                  className="h-8 w-24 shrink-0 px-2 text-sm"
-                />
-                <ToolbarIconButton title="Apply filter" onClick={applyFilter} disabled={!schema || loading}>
-                  <CheckIcon />
-                </ToolbarIconButton>
-                {query.filterColumn && query.filterOp ? (
-                  <ToolbarIconButton title="Clear filter" variant="outline" onClick={clearFilter}>
-                    <XIcon />
-                  </ToolbarIconButton>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 md:contents">
-              <ToolbarDivider className="hidden md:block" />
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-2">
+              <label htmlFor="row-limit" className="shrink-0 text-xs font-medium text-slate-500">
+                Rows per page
+              </label>
               <select
                 id="row-limit"
                 aria-label="Rows per page"
@@ -1446,40 +1450,44 @@ export default function AgentDatabasePage() {
                   })
                 }
                 disabled={!selectedTable || loading}
-                className={selectClassName("w-16 shrink-0")}
+                className={selectClassName("w-24 shrink-0")}
               >
                 {ROW_LIMIT_OPTIONS.map((limit) => (
                   <option key={limit} value={limit}>
-                    {limit}
+                    {limit.toLocaleString()}
                   </option>
                 ))}
               </select>
-              <ToolbarIconButton
-                title="Previous page"
-                variant="outline"
-                onClick={() => patchQuery({ offset: Math.max(0, query.offset - query.limit) })}
-                disabled={!canGoPrev || loading}
-              >
-                <ChevronLeftIcon />
-              </ToolbarIconButton>
-              <ToolbarIconButton
-                title="Next page"
-                variant="outline"
-                onClick={() => patchQuery({ offset: query.offset + query.limit })}
-                disabled={!canGoNext || loading}
-              >
-                <ChevronRightIcon />
-              </ToolbarIconButton>
+              <div className="flex shrink-0 items-center gap-1">
+                <span className="text-xs font-medium text-slate-500">Page</span>
+                <ToolbarIconButton
+                  title="Previous page"
+                  variant="outline"
+                  onClick={() => patchQuery({ offset: Math.max(0, query.offset - query.limit) })}
+                  disabled={!canGoPrev || loading}
+                >
+                  <ChevronLeftIcon />
+                </ToolbarIconButton>
+                <ToolbarIconButton
+                  title="Next page"
+                  variant="outline"
+                  onClick={() => patchQuery({ offset: query.offset + query.limit })}
+                  disabled={!canGoNext || loading}
+                >
+                  <ChevronRightIcon />
+                </ToolbarIconButton>
+              </div>
 
-              <span className="min-w-0 basis-full text-xs leading-relaxed text-slate-500 md:ml-auto md:basis-auto md:shrink-0 md:truncate">
+              <span className="min-w-0 basis-full text-xs leading-relaxed text-slate-500 md:ml-auto md:basis-auto md:shrink md:truncate">
                 {busy ? "Saving… · " : ""}
                 {selectedTable ? (
                   <>
-                    {selectedTable} · {rangeStart}–{rangeEnd}/{total}
+                    {selectedTable} · Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of{" "}
+                    {total.toLocaleString()} results
                     {query.filterColumn && query.filterOp ? (
                       <>
                         {" "}
-                        · {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
+                        · Filter: {query.filterColumn} {FILTER_OP_LABELS[query.filterOp as AgentDbFilterOp]}
                         {!NULL_FILTER_OPS.has(query.filterOp as AgentDbFilterOp) ? ` "${query.filterValue}"` : ""}
                       </>
                     ) : null}

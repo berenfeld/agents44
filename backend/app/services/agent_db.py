@@ -23,7 +23,7 @@ SYSTEM_TABLES = frozenset(
 
 IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 DEFAULT_ROW_LIMIT = 100
-MAX_ROW_LIMIT = 2000
+MAX_ROW_LIMIT = 10000
 ALLOWED_FILTER_OPS = frozenset(
     {"eq", "ne", "gt", "gte", "lt", "lte", "ilike", "like", "is_null", "is_not_null"}
 )
