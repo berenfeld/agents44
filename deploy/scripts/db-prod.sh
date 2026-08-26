@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Production PostgreSQL shell using PSQL_* vars from /opt/agents44/.env.
 # Usage: db-prod.sh [SQL query...]
 set -euo pipefail

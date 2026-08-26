@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Set or update a single KEY=VALUE in a dotenv file.
 set -euo pipefail
 

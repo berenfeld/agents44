@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Sync PostgreSQL role password from PSQL_* vars in .env.
 set -euo pipefail
 

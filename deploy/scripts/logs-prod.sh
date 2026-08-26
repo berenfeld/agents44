@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Production backend logs in /opt/agents44/logs.
 # Usage: logs-prod.sh [-f] [-n LINES]
 set -euo pipefail

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Generate random strong secrets for PostgreSQL, Flask, and dev login.
 set -euo pipefail
 

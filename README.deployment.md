@@ -1,215 +1,105 @@
-# Deployment — agents.catch44.co.il
+# Deployment — Agents44 (Docker + ECR + AWS)
 
-Production VM for the Agents44 platform. **Infrastructure** is installed once via `deploy/scripts/install-server.sh`; **application code** is deployed by GitHub Actions on every push to `main`.
+One Ubuntu 24.04 image runs everywhere: local Docker Compose and AWS. GitHub Actions builds it and pushes to Amazon ECR on every push to `main`.
 
-## Server
+## Image
 
-| Item | Value |
-|------|-------|
-| Hostname | `agents.catch44.co.il` |
-| IP | `51.102.214.244` |
-| OS | Ubuntu 24.04 LTS |
-| SSH user | `ubuntu` |
-| SSH key (admin) | `~/.ssh/catch44.co.il-access` |
-| App root | `/opt/agents44` |
-| Workspace | `/opt/agents44/workspace` |
-| Service user | `agents44` |
-| Backend unit | `agents44.service` |
-| TLS | Let's Encrypt via certbot |
+| Piece | Who |
+|-------|-----|
+| Frontend build (`npm`), Python venv, gunicorn, nginx | `root` |
+| PostgreSQL | OS user `psql` |
 
-## What runs where
+Tag format: `1.0.<commit-count>.<git-hash>` (example `1.0.59.19dbf81`) plus `latest`.
 
-| Layer | Managed by | Location |
-|-------|------------|----------|
-| PostgreSQL, nginx, systemd, certbot, Claude CLI | `deploy/scripts/install-server.sh` | system packages + `/etc/` |
-| systemd unit template | repo | `deploy/systemd/agents44.service` → `/etc/systemd/system/` |
-| nginx site template | repo | `deploy/nginx/agents.catch44.co.il.conf` → `/etc/nginx/sites-available/` |
-| Python venv, pip deps, DB migrations, frontend build | GitHub Actions (zip packages + `deploy/scripts/`) | `/opt/agents44/` |
-| Secrets & config | manual (once) | `/opt/agents44/.env` |
-
-## First-time infrastructure setup
-
-Only the bootstrap files are copied to the VM — **not** the full repository:
+Local:
 
 ```bash
-BOOT=/tmp/agents44-install
-HOST=ubuntu@agents.catch44.co.il
-KEY=~/.ssh/catch44.co.il-access
-
-ssh -i "$KEY" "$HOST" "mkdir -p $BOOT"
-scp -i "$KEY" -r deploy/ "$HOST:$BOOT/"
-scp -i "$KEY" .env.example "$HOST:$BOOT/"
-
-ssh -i "$KEY" "$HOST" "chmod +x $BOOT/deploy/scripts/install-server.sh && sudo bash $BOOT/deploy/scripts/install-server.sh"
+./start-dev.sh
+# or: docker compose up --build
 ```
 
-The script is **idempotent** — safe to re-run after changing `deploy/` configs or the install script itself.
+## GitHub secrets
 
-### What the install script does
+| Secret | Required | Value |
+|--------|----------|-------|
+| `AGENTS44_AWS_ACCESS_KEY_ID` | yes | IAM access key |
+| `AGENTS44_AWS_SECRET_ACCESS_KEY` | yes | IAM secret key |
+| `AGENTS44_ECR_REPOSITORY` | yes | `agents44` or full URI |
+| `AGENTS44_AWS_REGION` | no | defaults to `eu-central-1` |
 
-- Installs: PostgreSQL, nginx, Python 3, certbot, curl, unzip
-- Installs Claude CLI for the `agents44` service user
-- Creates `agents44` system user, `/opt/agents44`, `/opt/agents44/workspace`
-- Creates PostgreSQL role/database from `PSQL_*` vars in `.env` (via `sync-psql-password.sh`)
-- Adds the SSH deploy user (`ubuntu`) to the `agents44` group for rsync writes
-- Copies deploy configs into `/opt/agents44/deploy/` and installs them to `/etc/`
-- Obtains TLS certificate via certbot (webroot) and configures nginx for HTTPS-only with HTTP→HTTPS redirect
-- Creates `/opt/agents44/.env` from `.env.example` if missing
-- Enables `postgresql`, `nginx`, `agents44` systemd units
-- Does **not** install Python packages, run migrations, or deploy frontend/backend code
+### Get `AGENTS44_ECR_REPOSITORY` from the console
 
-### TLS
+1. AWS Console → region **Europe (Frankfurt) `eu-central-1`**
+2. **Elastic Container Registry** → **Repositories** → **Create repository**
+   - Visibility: Private
+   - Name: `agents44`
+3. Open the repo → copy **URI**  
+   Example: `123456789012.dkr.ecr.eu-central-1.amazonaws.com/agents44`
+4. Put that URI (or just `agents44`) in GitHub secret `AGENTS44_ECR_REPOSITORY`
 
-Handled automatically by `deploy/scripts/install-server.sh`:
+### Create an IAM user that can push to ECR
 
-1. Serves a temporary HTTP-only nginx config for ACME challenges
-2. Runs `certbot certonly --webroot` to obtain a Let's Encrypt certificate
-3. Installs the HTTPS nginx config (`deploy/nginx/agents.catch44.co.il.conf`) with HTTP→HTTPS redirect
+1. **IAM** → **Users** → **Create user** (e.g. `agents44-github-ecr`)
+2. **Attach policies directly** → create an inline policy (or customer managed) like:
 
-Certbot auto-renewal uses the same webroot path (`/var/www/certbot`); the HTTP server block keeps `/.well-known/acme-challenge/` open for renewals.
-
-## Production `.env`
-
-Edit `/opt/agents44/.env` on the server **before the first app deploy** (rsync will never overwrite this file):
-
-```bash
-ssh -i "$KEY" "$HOST" 'sudo -u agents44 nano /opt/agents44/.env'
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EcrAuth",
+      "Effect": "Allow",
+      "Action": ["ecr:GetAuthorizationToken"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrPush",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages"
+      ],
+      "Resource": "arn:aws:ecr:eu-central-1:ACCOUNT_ID:repository/agents44"
+    }
+  ]
+}
 ```
 
-Required production settings (remove all dev-only keys):
+Replace `ACCOUNT_ID` with your 12-digit account id.
 
-```dotenv
-PSQL_HOST=localhost
-PSQL_PORT=5432
-PSQL_DB=agents44
-PSQL_USER=agents44
-PSQL_PASSWORD=<random-password>
-FLASK_SECRET_KEY=<random-secret>
-WORKSPACE_PATH=/opt/agents44/workspace
-RUNTIME_DIR=/opt/agents44/runtime
-LOG_DIR=/opt/agents44/logs
-FRONTEND_URL=https://agents.catch44.co.il
+3. Open the user → **Security credentials** → **Create access key** → **Application running outside AWS**
+4. Copy Access key ID + Secret into GitHub secrets `AGENTS44_AWS_ACCESS_KEY_ID` / `AGENTS44_AWS_SECRET_ACCESS_KEY`
 
-ANTHROPIC_API_KEY=<key>
-GOOGLE_CLIENT_ID=<id>
-SMTP_APP_PASSWORD=<app-password>
-```
+## Simplest way to run the image on AWS
 
-Do **not** set `FLASK_ENV`, `FLASK_DEBUG`, `FLASK_RUN_HOST`, or `FLASK_RUN_PORT` on production.
+After the pipeline has pushed to ECR, the simplest managed option is **AWS App Runner** (no cluster to manage; pulls from ECR and gives you an HTTPS URL).
 
-After changing `PSQL_PASSWORD` in `.env`, sync it to PostgreSQL:
+1. Console → **App Runner** → **Create service**
+2. Source: **Container registry** → **Amazon ECR** → pick `agents44:latest` (or a version tag)
+3. Deployment: Automatic (redeploy when `latest` changes) or Manual
+4. Port: **80**
+5. Environment / secrets: put the same keys as `.env` (at least `ANTHROPIC_API_KEY`, `FLASK_SECRET_KEY`, `PSQL_*`, `FRONTEND_URL`, Google/SMTP as needed). App Runner injects env vars; you can also mount a secret later via Secrets Manager.
+6. Create → wait for the service URL
 
-```bash
-ssh -i "$KEY" "$HOST" 'sudo bash /opt/agents44/deploy/scripts/sync-psql-password.sh'
-```
+**Caveats for this all-in-one image on App Runner / Fargate:**
 
-In Google Cloud Console (OAuth 2.0 Web client), add **Authorized JavaScript origins**:
+- Postgres data lives inside the container filesystem unless you attach durable storage. For a real environment, attach an **EFS** volume (or move DB to **RDS** later). App Runner has limited persistent storage; **ECS Fargate + EFS** is the next step up if you need durable Postgres/workspace.
+- Give the task/service enough CPU/memory (this image runs nginx + gunicorn + Postgres + Claude CLI).
+- Terminate TLS at App Runner / ALB; the container listens on HTTP `:80`.
 
-- `https://agents.catch44.co.il`
-- `http://localhost:3000` (local dev)
+**ECS Fargate** (still simple, more control): create a task definition with the ECR image, port 80, env from Secrets Manager, optional EFS mounts for `/var/lib/psql/data` and `/opt/agents44/workspace`, then a service behind an Application Load Balancer.
 
-## GitHub Actions deploy
+## Container `.env`
 
-Workflow: `.github/workflows/deploy.yml` — triggers on push to `main`.
+Mount or inject the same keys as local `.env`. Inside the image, `PSQL_HOST` is forced to `localhost`. Set `FRONTEND_URL` to your public URL (App Runner URL or `https://agents.catch44.co.il`).
 
-### Repository secrets
+## Legacy VM host install
 
-| Secret | Value |
-|--------|-------|
-| `DEPLOY_HOST` | `agents.catch44.co.il` |
-| `DEPLOY_USER` | `ubuntu` |
-| `DEPLOY_SSH_KEY` | Private key with SSH access to the VM (paste full PEM contents) |
-
-### Deploy steps (automatic)
-
-1. **Build** — `npm ci`, lint, `npm run build`; zip `frontend/dist` → `dist/frontend.zip`; zip `backend/` → `dist/backend.zip`
-2. **Upload** — SCP `frontend.zip`, `backend.zip`, and full `deploy/` to `/tmp/agents44-deploy/`
-3. **Stop** — `stop-backend.sh`, then `stop-frontend.sh`
-4. **Install deploy** — sync `deploy/` to `/opt/agents44/deploy/`
-5. **Deploy frontend** — unzip `frontend.zip` → `/opt/agents44/frontend/dist`
-6. **Deploy backend** — unzip `backend.zip` → `/opt/agents44/backend`
-7. **Start** — `start-backend.sh`, then `start-frontend.sh`
-
-Server state **not** touched by deploy: `/opt/agents44/.env`, `/opt/agents44/venv/`, `/opt/agents44/runtime/`, `/opt/agents44/workspace/`, `/opt/agents44/logs/`.
-
-### Manual deploy trigger
-
-Push to `main`, or re-run the **Deploy** workflow from the GitHub Actions tab.
-
-## Operations
-
-### Service status
-
-```bash
-ssh -i "$KEY" "$HOST" 'systemctl status agents44 nginx postgresql'
-```
-
-### Logs
-
-Backend logs are written to `/opt/agents44/logs/`:
-
-| File | Source |
-|------|--------|
-| `error.log` | Gunicorn + all app stderr (API req/res, errors, tracebacks) |
-| `access.log` | Gunicorn HTTP access |
-
-```bash
-ssh -i "$KEY" "$HOST" 'bash /opt/agents44/deploy/scripts/logs-prod.sh'
-ssh -i "$KEY" "$HOST" 'bash /opt/agents44/deploy/scripts/logs-prod.sh -f'
-ssh -i "$KEY" "$HOST" 'bash /opt/agents44/deploy/scripts/logs-prod.sh -n 200'
-```
-
-### Stop / start services
-
-Scripts live on the VM at `/opt/agents44/deploy/scripts/` (updated on each deploy):
-
-```bash
-ssh -i "$KEY" "$HOST" 'sudo bash /opt/agents44/deploy/scripts/stop-backend.sh'
-ssh -i "$KEY" "$HOST" 'sudo bash /opt/agents44/deploy/scripts/start-backend.sh'
-ssh -i "$KEY" "$HOST" 'sudo bash /opt/agents44/deploy/scripts/stop-frontend.sh'
-ssh -i "$KEY" "$HOST" 'sudo bash /opt/agents44/deploy/scripts/start-frontend.sh'
-```
-
-| Script | Action |
-|--------|--------|
-| `stop-backend.sh` | stop `agents44` systemd unit |
-| `start-backend.sh` | pip install, migrate, start `agents44` |
-| `stop-frontend.sh` | stop nginx |
-| `start-frontend.sh` | start/reload nginx |
-
-### Restart after config change
-
-```bash
-ssh -i "$KEY" "$HOST" 'sudo systemctl restart agents44'
-```
-
-### Re-apply infrastructure (nginx/systemd/package updates)
-
-Re-scp bootstrap files and re-run install script (see above). Or after a code deploy, from the server:
-
-```bash
-sudo bash /opt/agents44/deploy/scripts/install-server.sh
-```
-
-### Database
-
-```bash
-ssh -i "$KEY" "$HOST" 'sudo -u postgres psql -d agents44'
-```
-
-## Current status
-
-| Component | Status |
-|-----------|--------|
-| PostgreSQL | installed, running |
-| nginx | installed, running, TLS enabled |
-| agents44.service | enabled; starts after first GitHub deploy |
-| Application code | awaiting first push to `main` with secrets configured |
-| `/opt/agents44/.env` | created from template — **secrets must be filled in** |
-
-## URLs
-
-| URL | Purpose |
-|-----|---------|
-| https://agents.catch44.co.il | Frontend UI |
-| https://agents.catch44.co.il/api/health | API health check |
+The old zip/SCP + `deploy/scripts/install-server.sh` path is obsolete for CI. Scripts under `deploy/` remain for reference only.

@@ -61,7 +61,16 @@ def create_app() -> Flask:
 
     _configure_logging(app.config["LOG_DIR"])
 
-    CORS(app, supports_credentials=True, origins=["http://localhost:3000", "https://agents.catch44.co.il"])
+    CORS(
+        app,
+        supports_credentials=True,
+        origins=[
+            "http://localhost",
+            "http://localhost:80",
+            "http://localhost:3000",
+            "https://agents.catch44.co.il",
+        ],
+    )
 
     db.init_app(app)
 

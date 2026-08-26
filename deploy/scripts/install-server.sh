@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Idempotent VM infrastructure setup for agents.catch44.co.il.
 # Installs system packages, PostgreSQL, nginx, systemd — not application code.
 # Re-run safely after pulling repo updates that change deploy/ configs.

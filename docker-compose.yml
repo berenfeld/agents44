@@ -1,0 +1,23 @@
+services:
+  agents44:
+    image: agents44:${TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+    ports:
+      - "80:80"
+    volumes:
+      - ./.env:/opt/agents44/.env:ro
+      - agents44_pgdata:/var/lib/psql/data
+      - ./.workspace:/opt/agents44/workspace
+      - agents44_logs:/opt/agents44/logs
+      - agents44_runtime:/opt/agents44/runtime
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  agents44_pgdata:
+  agents44_logs:
+  agents44_runtime:
