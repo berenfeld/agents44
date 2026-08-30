@@ -130,14 +130,6 @@ function PencilIcon({ className }: { className?: string }) {
   );
 }
 
-function TrashIcon({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
-      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function ToolbarIconButton({
   title,
   onClick,
@@ -544,16 +536,15 @@ export default function AgentFilesPage() {
                     >
                       {entry.name}/
                     </button>
-                    <button
+                    <Button
                       type="button"
-                      title={`Delete ${entry.name}`}
-                      aria-label={`Delete ${entry.name}`}
+                      variant="destructive"
+                      className="h-7 shrink-0 px-2 text-xs"
                       disabled={deleting}
                       onClick={() => setDeleteTarget(entry)}
-                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                     >
-                      <TrashIcon className="h-3.5 w-3.5" />
-                    </button>
+                      Delete
+                    </Button>
                   </>
                 ) : (
                   <>

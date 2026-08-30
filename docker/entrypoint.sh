@@ -10,6 +10,9 @@ PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort | tail -1)"
 export PATH="/root/.local/bin:${PG_BIN}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export LANG="${LANG:-en_US.UTF-8}"
 export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+# Claude CLI refuses --permission-mode bypassPermissions as root unless it
+# believes it is in a sandbox. This image is the sandbox.
+export IS_SANDBOX=1
 
 if [ -f "$ENV_FILE" ]; then
   set -a

@@ -586,6 +586,9 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         env = os.environ.copy()
         if current_app.config.get("ANTHROPIC_API_KEY"):
             env["ANTHROPIC_API_KEY"] = current_app.config["ANTHROPIC_API_KEY"]
+        # Claude CLI maps bypassPermissions to --dangerously-skip-permissions and
+        # exits as uid 0 unless IS_SANDBOX=1. Gunicorn runs as root in this image.
+        env["IS_SANDBOX"] = "1"
 
         extra_args = get_claude_cli_extra_args()
         cmd = [

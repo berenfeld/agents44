@@ -69,7 +69,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # --- runtime: nginx + gunicorn + postgres in one image ---
 FROM base AS runtime
 ENV PGDATA=/var/lib/psql/data \
-    PATH=/root/.local/bin:/opt/agents44/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/root/.local/bin:/opt/agents44/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    IS_SANDBOX=1
 
 # Heavy OS packages + Claude CLI — must not depend on APP_VERSION
 RUN apt-get update \

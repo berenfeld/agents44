@@ -8,6 +8,7 @@ One Ubuntu 24.04 image runs everywhere: local Docker Compose and AWS. GitHub Act
 |-------|-----|
 | Frontend build (`npm`), Python venv, gunicorn, nginx | `root` |
 | PostgreSQL | OS user `psql` |
+| Claude CLI agent runs | `root` with `IS_SANDBOX=1` (CLI blocks `bypassPermissions` as uid 0 otherwise) |
 
 Tag format: `1.0.<commit-count>.<git-hash>` (example `1.0.59.19dbf81`) plus `latest`.
 
