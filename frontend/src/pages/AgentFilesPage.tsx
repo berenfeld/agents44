@@ -130,6 +130,14 @@ function PencilIcon({ className }: { className?: string }) {
   );
 }
 
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function ToolbarIconButton({
   title,
   onClick,
@@ -528,50 +536,51 @@ export default function AgentFilesPage() {
                 <span className="w-4 shrink-0 text-xs">{entry.is_dir ? "📁" : "📄"}</span>
 
                 {entry.is_dir ? (
-                  <>
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 truncate text-left"
-                      onClick={() => enterFolder(entry.path)}
-                    >
-                      {entry.name}/
-                    </button>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      className="h-7 shrink-0 px-2 text-xs"
-                      disabled={deleting}
-                      onClick={() => setDeleteTarget(entry)}
-                    >
-                      Delete
-                    </Button>
-                  </>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left"
+                    onClick={() => enterFolder(entry.path)}
+                  >
+                    {entry.name}/
+                  </button>
                 ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 truncate text-left hover:text-slate-900"
-                      title="View file"
-                      onClick={() => openFile(entry.path, "view")}
-                    >
-                      {entry.name}
-                    </button>
-                    <button
-                      type="button"
-                      title={`Rename ${entry.name}`}
-                      aria-label={`Rename ${entry.name}`}
-                      disabled={renaming}
-                      onClick={() => openRename(entry)}
-                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40"
-                    >
-                      <PencilIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate text-left hover:text-slate-900"
+                    title="View file"
+                    onClick={() => openFile(entry.path, "view")}
+                  >
+                    {entry.name}
+                  </button>
                 )}
 
                 {!entry.is_dir ? (
                   <span className="shrink-0 text-xs text-slate-400">{formatFileSize(entry.size_bytes)}</span>
                 ) : null}
+
+                {!entry.is_dir ? (
+                  <button
+                    type="button"
+                    title={`Rename ${entry.name}`}
+                    aria-label={`Rename ${entry.name}`}
+                    disabled={renaming}
+                    onClick={() => openRename(entry)}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40"
+                  >
+                    <PencilIcon className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  title={`Delete ${entry.name}`}
+                  aria-label={`Delete ${entry.name}`}
+                  disabled={deleting}
+                  onClick={() => setDeleteTarget(entry)}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                >
+                  <TrashIcon className="h-3.5 w-3.5" />
+                </button>
               </div>
             </li>
           ))}
@@ -673,9 +682,9 @@ export default function AgentFilesPage() {
                   >
                     Rename
                   </Button>
-                  <Button
+                  <ToolbarIconButton
+                    title="Delete file"
                     variant="destructive"
-                    className="h-8 px-2.5 text-xs"
                     disabled={deleting}
                     onClick={() => {
                       const entry =
@@ -689,8 +698,8 @@ export default function AgentFilesPage() {
                       setDeleteTarget(entry);
                     }}
                   >
-                    Delete
-                  </Button>
+                    <TrashIcon />
+                  </ToolbarIconButton>
                 </div>
               </>
             ) : (
@@ -700,9 +709,9 @@ export default function AgentFilesPage() {
                 </span>
                 {currentFolder ? (
                   <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                    <Button
+                    <ToolbarIconButton
+                      title="Delete folder"
                       variant="destructive"
-                      className="h-8 px-2.5 text-xs"
                       disabled={deleting}
                       onClick={() =>
                         setDeleteTarget({
@@ -714,8 +723,8 @@ export default function AgentFilesPage() {
                         })
                       }
                     >
-                      Delete folder
-                    </Button>
+                      <TrashIcon />
+                    </ToolbarIconButton>
                   </div>
                 ) : null}
               </>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AgentRun, api } from "@/api/client";
+import { AgentRun, api, userFacingApiError } from "@/api/client";
 import { RunLogViewer } from "@/components/agents/RunLogViewer";
 import { RunSearchToolbar } from "@/components/agents/RunSearchToolbar";
 import { RunStatusBadge } from "@/components/agents/RunStatusBadge";
@@ -11,7 +11,7 @@ import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { cn, formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
 import { countMatches } from "@/lib/search-highlight";
 import { formatRunLog } from "@/lib/format-run-log";
-import { ConfirmModal, Modal } from "@/components/ui/modal";
+import { ConfirmModal, Modal, NoticeModal } from "@/components/ui/modal";
 import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
 import {
   DataCard,
@@ -33,6 +33,14 @@ function isActiveRun(status: string) {
 
 function isRunningRun(status: string) {
   return status === "running";
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 const RUNS_SORT_KEYS = new Set([
@@ -118,6 +126,9 @@ export default function AgentsRunsPage() {
   const [logAutoScroll, setLogAutoScroll] = useState(true);
   const [stopRun, setStopRun] = useState<AgentRun | null>(null);
   const [stoppingRunId, setStoppingRunId] = useState<number | null>(null);
+  const [deleteRun, setDeleteRun] = useState<AgentRun | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
 
   const sortAccessors = useMemo(
     () => ({
@@ -304,9 +315,31 @@ export default function AgentsRunsPage() {
       setStopRun(null);
       await load();
     } catch (error) {
-      console.error(error);
+      const message = userFacingApiError(error);
+      setStopRun(null);
+      setNotice({ title: "Could not stop run", message });
     } finally {
       setStoppingRunId(null);
+    }
+  };
+
+  const confirmDeleteRun = async () => {
+    if (!deleteRun || deleting) return;
+    const target = deleteRun;
+    setDeleting(true);
+    try {
+      await api.delete(`/runs/${target.id}`);
+      setDeleteRun(null);
+      setRuns((rows) => rows.filter((row) => row.id !== target.id));
+      if (modalRunId === target.id) {
+        handleModalOpenChange(false);
+      }
+      setNotice({ title: "Run deleted", message: `Deleted run #${target.id}.` });
+    } catch (error) {
+      setDeleteRun(null);
+      setNotice({ title: "Could not delete run", message: userFacingApiError(error) });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -402,6 +435,7 @@ export default function AgentsRunsPage() {
               <th className="px-4 py-2">Prompt</th>
               <th className="px-4 py-2">Log</th>
               <th className="px-4 py-2">Summary</th>
+              <th className="px-4 py-2"><span className="sr-only">Delete</span></th>
             </tr>
           </thead>
           <tbody>
@@ -455,6 +489,22 @@ export default function AgentsRunsPage() {
                     onView={() => openSummary(run)}
                     disabled={!run.run_dir && !isActiveRun(run.status)}
                   />
+                </td>
+                <td className="px-4 py-2">
+                  <button
+                    type="button"
+                    title={
+                      isActiveRun(run.status) ? "Stop the run before deleting it" : `Delete run #${run.id}`
+                    }
+                    aria-label={
+                      isActiveRun(run.status) ? "Stop the run before deleting it" : `Delete run #${run.id}`
+                    }
+                    disabled={isActiveRun(run.status) || deleting}
+                    onClick={() => setDeleteRun(run)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -520,6 +570,18 @@ export default function AgentsRunsPage() {
               >
                 Summary
               </Button>
+              <button
+                type="button"
+                title={isActiveRun(run.status) ? "Stop the run before deleting it" : `Delete run #${run.id}`}
+                aria-label={
+                  isActiveRun(run.status) ? "Stop the run before deleting it" : `Delete run #${run.id}`
+                }
+                disabled={isActiveRun(run.status) || deleting}
+                onClick={() => setDeleteRun(run)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+              >
+                <TrashIcon className="h-4 w-4" />
+              </button>
             </DataCardActions>
           </DataCard>
         ))}
@@ -569,6 +631,31 @@ export default function AgentsRunsPage() {
           ) : null
         }
         onConfirm={confirmStopRun}
+      />
+      <ConfirmModal
+        open={!!deleteRun}
+        onOpenChange={(open) => !open && !deleting && setDeleteRun(null)}
+        title="Delete run?"
+        confirmLabel={deleting ? "Deleting..." : "Delete"}
+        destructive
+        busy={deleting}
+        description={
+          deleteRun ? (
+            <p>
+              Delete run <strong>#{deleteRun.id}</strong> ({deleteRun.agent_name || deleteRun.agent_id}) from
+              the list? Workspace run files are kept.
+            </p>
+          ) : null
+        }
+        onConfirm={() => {
+          void confirmDeleteRun();
+        }}
+      />
+      <NoticeModal
+        open={!!notice}
+        onOpenChange={(open) => !open && setNotice(null)}
+        title={notice?.title || "Notice"}
+        description={notice ? <p>{notice.message}</p> : null}
       />
     </div>
   );

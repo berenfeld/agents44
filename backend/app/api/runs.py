@@ -5,6 +5,7 @@ from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.extensions import db
 from app.models import SystemAgentRun
+from app.models.run_status import RunStatus
 from app.services.model_registry import get_default_model, get_supported_models
 from app.services.workspace import RUN_SUMMARY_FILE, workspace_root
 
@@ -90,6 +91,19 @@ def get_run_summary(run_id: int):
     if not summary_file.exists():
         return jsonify({"summary": ""})
     return jsonify({"summary": summary_file.read_text(encoding="utf-8")})
+
+
+@runs_bp.delete("/<int:run_id>")
+@api_endpoint
+@login_required
+def delete_run(run_id: int):
+    run = db.session.get(SystemAgentRun, run_id)
+    if not run:
+        raise APIClientError("Not found", 404)
+    if run.status in (RunStatus.pending, RunStatus.running):
+        raise APIClientError("Stop the run before deleting it", 400)
+    db.session.delete(run)
+    return jsonify({"deleted": run_id})
 
 
 @runs_bp.post("/<int:run_id>/stop")
