@@ -61,16 +61,17 @@ def create_app() -> Flask:
 
     _configure_logging(app.config["LOG_DIR"])
 
-    CORS(
-        app,
-        supports_credentials=True,
-        origins=[
-            "http://localhost",
-            "http://localhost:80",
-            "http://localhost:3000",
-            "https://agents.catch44.co.il",
-        ],
-    )
+    # Allow configured public URL plus local docker/dev origins.
+    cors_origins = {
+        "http://localhost",
+        "http://localhost:80",
+        "http://localhost:3000",
+        "https://agents.catch44.co.il",
+    }
+    frontend_url = (os.getenv("FRONTEND_URL") or "").strip().rstrip("/")
+    if frontend_url:
+        cors_origins.add(frontend_url)
+    CORS(app, supports_credentials=True, origins=sorted(cors_origins))
 
     db.init_app(app)
 

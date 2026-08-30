@@ -57,7 +57,7 @@ rm -f /etc/nginx/sites-enabled/default
 echo "==> [2/7] Verify backend on 127.0.0.1:${BACKEND_PORT}"
 if ! curl -fsS --max-time 3 "http://127.0.0.1:${BACKEND_PORT}/api/health" >/dev/null; then
   echo "ERROR: nothing healthy at http://127.0.0.1:${BACKEND_PORT}/api/health" >&2
-  echo "       Start the app first, e.g.: ./lightsail-run.sh myname 'API_KEY' ${BACKEND_PORT}" >&2
+  echo "       Start the app first, e.g.: ./lightsail-start.sh myname ${BACKEND_PORT}" >&2
   exit 1
 fi
 echo "  Backend OK"
@@ -204,4 +204,4 @@ echo "  https://${DNS_NAME}/api/health"
 echo "  Upstream: http://127.0.0.1:${BACKEND_PORT}"
 echo ""
 echo "Set the app public URL when (re)starting the container:"
-echo "  FRONTEND_URL=https://${DNS_NAME} ./lightsail-run.sh <name> '<anthropic_key>' ${BACKEND_PORT}"
+echo "  FRONTEND_URL=https://${DNS_NAME} ./lightsail-start.sh <name> ${BACKEND_PORT}"
