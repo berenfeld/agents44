@@ -35,6 +35,15 @@ function isRunningRun(status: string) {
   return status === "running";
 }
 
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" strokeLinecap="round" />
+      <path d="M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function TrashIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
@@ -128,6 +137,7 @@ export default function AgentsRunsPage() {
   const [stoppingRunId, setStoppingRunId] = useState<number | null>(null);
   const [deleteRun, setDeleteRun] = useState<AgentRun | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
 
   const sortAccessors = useMemo(
@@ -217,6 +227,18 @@ export default function AgentsRunsPage() {
     const res = await api.get<{ items: AgentRun[] }>("/runs");
     setRuns(res.data.items);
   }, []);
+
+  const refreshRuns = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await load();
+    } catch (error) {
+      setNotice({ title: "Could not refresh runs", message: userFacingApiError(error) });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const fetchLog = useCallback(async (runId: number) => {
     const res = await api.get<{ log: string }>(`/runs/${runId}/log`);
@@ -346,7 +368,22 @@ export default function AgentsRunsPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-        <h1 className="text-2xl font-semibold">Agents Runs</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold">Agents Runs</h1>
+          <Button
+            type="button"
+            variant="outline"
+            title={refreshing ? "Refreshing..." : "Refresh"}
+            aria-label={refreshing ? "Refreshing..." : "Refresh"}
+            disabled={refreshing}
+            onClick={() => {
+              void refreshRuns();
+            }}
+            className="h-9 w-9 p-0"
+          >
+            <RefreshIcon className={refreshing ? "animate-spin" : undefined} />
+          </Button>
+        </div>
         <select
           id="runs-agent-filter"
           aria-label="Filter by agent"

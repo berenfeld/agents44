@@ -6,10 +6,12 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
 from flask import current_app
@@ -420,6 +422,62 @@ def _run_claude_subprocess(
     )
 
 
+def _installed_package_version(name: str) -> str:
+    try:
+        return package_version(name)
+    except PackageNotFoundError:
+        return "not installed"
+
+
+def build_system_tools_instructions(agent_name: str) -> str:
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    playwright_version = _installed_package_version("playwright")
+    browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
+    venv_dir = f"{agent_name}/.venv"
+    if playwright_version == "not installed":
+        private_playwright = (
+            f"`{venv_dir}/bin/pip install playwright` then `{venv_dir}/bin/playwright install chromium`"
+        )
+    else:
+        private_playwright = f"`{venv_dir}/bin/pip install playwright=={playwright_version}`"
+    return "\n".join(
+        [
+            "# System",
+            "",
+            "Ubuntu 24.04. OS libraries are already in the image — do not apt-get or run `playwright install-deps`.",
+            "",
+            f"## python3 ({python_version})",
+            "- `python3` and `python` are on PATH. Use them to run scripts.",
+            "- Do not `pip install` into this interpreter (it is the platform venv).",
+            "",
+            "## venv",
+            f"- Create an isolated env in your workspace: `python3 -m venv {venv_dir}`",
+            f"- Install packages there: `{venv_dir}/bin/pip install <package>`",
+            f"- Run with `{venv_dir}/bin/python script.py`",
+            "",
+            f"## playwright ({playwright_version})",
+            "- Python package is installed. Chromium (with JavaScript) is pre-downloaded.",
+            f"- Browser binaries live at `{browsers_path}` (`PLAYWRIGHT_BROWSERS_PATH`).",
+            "- Launch headless Chromium; page JS runs in the browser:",
+            "",
+            "```python",
+            "from playwright.sync_api import sync_playwright",
+            "",
+            "with sync_playwright() as p:",
+            "    browser = p.chromium.launch(headless=True)",
+            "    page = browser.new_page()",
+            "    page.goto('https://example.com')",
+            "    page.wait_for_load_state('networkidle')",
+            "    html = page.content()",
+            "    browser.close()",
+            "```",
+            "",
+            f"- In a private venv, install the same Playwright version so Chromium is reused: {private_playwright}",
+            "- Do not run `playwright install-deps`. Run `playwright install chromium` only if the package version differs.",
+        ]
+    )
+
+
 def build_run_summary_instructions(summary_path: str) -> str:
     return "\n".join(
         [
@@ -454,6 +512,8 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
         f"Department: {agent.department}",
         f"Model: {agent.model}",
         f"Cron: {agent.crond or '(none)'}",
+        "",
+        build_system_tools_instructions(agent.name),
         "",
         build_agent_db_instructions(
             agent_name=agent.name,
