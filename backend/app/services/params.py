@@ -25,6 +25,10 @@ SEED_PARAMS = [
                     "input_per_million": 10.0,
                     "output_per_million": 50.0,
                 },
+                "claude-opus-5": {
+                    "input_per_million": 5.0,
+                    "output_per_million": 25.0,
+                },
                 "claude-opus-4-8": {
                     "input_per_million": 5.0,
                     "output_per_million": 25.0,
@@ -41,9 +45,9 @@ SEED_PARAMS = [
                     "input_per_million": 5.0,
                     "output_per_million": 25.0,
                 },
-                "claude-opus-4-1-20250805": {
-                    "input_per_million": 15.0,
-                    "output_per_million": 75.0,
+                "claude-sonnet-5": {
+                    "input_per_million": 2.0,
+                    "output_per_million": 10.0,
                 },
                 "claude-sonnet-4-6": {
                     "input_per_million": 3.0,
