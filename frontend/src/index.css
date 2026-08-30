@@ -9,27 +9,14 @@ body {
   background: #f8fafc;
 }
 
-/* GSI iframe is cross-origin (often RTL for Hebrew Google accounts). Keep the
-   wrapper LTR/full-width so the button lines up with the login fields. */
-.google-login-button {
-  display: flex;
-  justify-content: flex-start;
-  width: 100%;
-}
-
+/* Official GIS iframe sits invisibly over our outline button so clicks still use Google UI. */
 .google-login-button > div,
-.google-login-button > div > div {
-  display: flex !important;
-  justify-content: flex-start !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  margin: 0 !important;
-}
-
+.google-login-button > div > div,
 .google-login-button iframe {
   margin: 0 !important;
   width: 100% !important;
-  max-width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
 }
 
 .rdg-light {
