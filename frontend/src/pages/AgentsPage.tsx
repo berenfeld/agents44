@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Agent, api, buildAgentWritePayload, ModelsResponse } from "@/api/client";
+import { useSearchParams } from "react-router-dom";
+import { Agent, api, buildAgentWritePayload, Department, ModelsResponse } from "@/api/client";
 import { AgentDetailSummary } from "@/components/agents/AgentDetailSummary";
 import { AgentFormDialog } from "@/components/agents/AgentFormDialog";
 import { AgentRunningTag } from "@/components/agents/AgentRunningTag";
@@ -16,6 +17,7 @@ import { SortableTh } from "@/components/ui/sortable-table";
 import { Button } from "@/components/ui/primitives";
 import { getCrontabError } from "@/lib/crontab";
 import { useTableSort } from "@/hooks/useTableSort";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/page-header";
 import {
   DataCard,
@@ -27,7 +29,11 @@ import {
 } from "@/components/ui/data-card";
 
 export default function AgentsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const departmentFilter = searchParams.get("department") ?? "";
+
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
@@ -52,16 +58,37 @@ export default function AgentsPage() {
     [],
   );
 
-  const { sorted, sortKey, sortDir, toggleSort } = useTableSort(agents, sortAccessors, "name");
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const department of departments) {
+      names.add(department.name);
+    }
+    for (const agent of agents) {
+      names.add(agent.department);
+    }
+    if (departmentFilter) {
+      names.add(departmentFilter);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [agents, departmentFilter, departments]);
+
+  const filteredAgents = useMemo(() => {
+    if (!departmentFilter) return agents;
+    return agents.filter((agent) => agent.department === departmentFilter);
+  }, [agents, departmentFilter]);
+
+  const { sorted, sortKey, sortDir, toggleSort } = useTableSort(filteredAgents, sortAccessors, "name");
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [agentsRes, modelsRes] = await Promise.all([
+    const [agentsRes, modelsRes, departmentsRes] = await Promise.all([
       api.get<Agent[]>("/agents"),
       api.get<ModelsResponse>("/models"),
+      api.get<Department[]>("/departments"),
     ]);
     setAgents(agentsRes.data);
     setModels(modelsRes.data.models);
+    setDepartments(departmentsRes.data);
     setDraftCrond(Object.fromEntries(agentsRes.data.map((agent) => [agent.id, agent.crond || ""])));
     setDraftTimeout(
       Object.fromEntries(agentsRes.data.map((agent) => [agent.id, formatTimeoutSeconds(agent.timeout_seconds)])),
@@ -164,7 +191,41 @@ export default function AgentsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Agents" actions={<Button onClick={() => setFormOpen(true)}>New Agent</Button>} />
+      <PageHeader
+        title="Agents"
+        filters={
+          <select
+            id="agents-department-filter"
+            aria-label="Filter by department"
+            className={cn(
+              "h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 sm:w-auto sm:min-w-[12rem]",
+            )}
+            value={departmentFilter}
+            onChange={(e) => {
+              setSearchParams(
+                (current) => {
+                  const params = new URLSearchParams(current);
+                  if (e.target.value) {
+                    params.set("department", e.target.value);
+                  } else {
+                    params.delete("department");
+                  }
+                  return params;
+                },
+                { replace: true },
+              );
+            }}
+          >
+            <option value="">All departments</option>
+            {departmentOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        }
+        actions={<Button onClick={() => setFormOpen(true)}>New Agent</Button>}
+      />
 
       {loading ? (
         <p>Loading...</p>
