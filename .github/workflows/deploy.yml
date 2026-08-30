@@ -2,7 +2,7 @@ name: Build and push image
 
 on:
   push:
-    branches: [main, docker-ecr-deploy]
+    branches: [main]
 
 permissions:
   contents: read
