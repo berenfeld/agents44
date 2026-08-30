@@ -349,8 +349,21 @@ def drop_agent_db_access(conn: Connection, *, agent_name: str, db_user: str | No
 
 
 def drop_department_schema(conn: Connection, department: str) -> None:
-    schema = department_schema_name(department)
-    _execute(conn, f"DROP SCHEMA IF EXISTS {quote_ident(schema)} CASCADE")
+    """Drop the department schema if it exists. Missing or invalid names are not errors."""
+    schema = _try_department_schema_name(department)
+    if not schema:
+        logger.info("No PostgreSQL schema to drop for department %r", department)
+        return
+    try:
+        with conn.begin_nested():
+            _execute(conn, f"DROP SCHEMA IF EXISTS {quote_ident(schema)} CASCADE")
+    except Exception:
+        logger.warning(
+            "Could not drop schema %s for department %r (already gone or not provisioned)",
+            schema,
+            department,
+            exc_info=True,
+        )
 
 
 def teardown_provisioned_schemas(conn: Connection) -> None:
