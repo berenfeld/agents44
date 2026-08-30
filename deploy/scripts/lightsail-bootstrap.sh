@@ -45,8 +45,7 @@ if ! command -v aws >/dev/null 2>&1; then
   rm -rf "$tmp"
 fi
 
-$SUDO mkdir -p /opt/agents44
-$SUDO chmod 755 /opt/agents44
+mkdir -p "${HOME}/.agents"
 
 echo ""
 echo "OK"
