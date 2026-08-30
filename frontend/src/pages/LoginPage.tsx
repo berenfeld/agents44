@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
 import { api, userFacingApiError } from "@/api/client";
 import { AppFooter } from "@/components/ui/app-footer";
+import { NoticeModal } from "@/components/ui/modal";
 import { Button, Input, Label } from "@/components/ui/primitives";
 
 type DevLoginConfig = {
@@ -116,22 +117,20 @@ function FittedGoogleLogin({
 export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<void> }) {
   const [devLoginEnabled, setDevLoginEnabled] = useState(Boolean(defaultDevEmail));
   const [googleLogin, setGoogleLogin] = useState<GoogleLoginConfig | null>(null);
-  const [googleError, setGoogleError] = useState<string | null>(null);
-  const [devError, setDevError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [devSubmitting, setDevSubmitting] = useState(false);
   const [email, setEmail] = useState(defaultDevEmail);
   const [password, setPassword] = useState(defaultDevPassword);
 
   async function handleDevLogin(event: FormEvent) {
     event.preventDefault();
-    setGoogleError(null);
-    setDevError(null);
+    setNotice(null);
     setDevSubmitting(true);
     try {
       await api.post("/auth/dev-login", { email, password });
       await onLogin();
     } catch (err) {
-      setDevError(userFacingApiError(err));
+      setNotice({ title: "Could not sign in", message: userFacingApiError(err) });
     } finally {
       setDevSubmitting(false);
     }
@@ -166,16 +165,18 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
     <GoogleOAuthProvider clientId={googleLogin.clientId} locale="en">
       <FittedGoogleLogin
         onSuccess={async (credential) => {
-          setGoogleError(null);
           try {
             await api.post("/auth/google", { credential });
             await onLogin();
           } catch (err) {
-            setGoogleError(userFacingApiError(err));
+            setNotice({ title: "Could not sign in", message: userFacingApiError(err) });
           }
         }}
         onError={() => {
-          setGoogleError("Google sign-in was cancelled or failed.");
+          setNotice({
+            title: "Could not sign in",
+            message: "Google sign-in was cancelled or failed.",
+          });
         }}
       />
     </GoogleOAuthProvider>
@@ -189,7 +190,6 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
           <p className="mt-2 text-sm text-slate-600">Sign in to manage agents and workspace files.</p>
           <div className="mt-6 space-y-4">
             {googleButton}
-            {googleError ? <p className="text-sm text-red-600">{googleError}</p> : null}
             {devLoginEnabled ? (
               <form className="space-y-4" onSubmit={handleDevLogin} autoComplete="off">
                 <div>
@@ -213,7 +213,6 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
-                {devError ? <p className="text-sm text-red-600">{devError}</p> : null}
                 <Button variant="outline" className="w-full" type="submit" disabled={devSubmitting}>
                   {devSubmitting ? "Signing in..." : "Dev login"}
                 </Button>
@@ -222,6 +221,12 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
           </div>
         </div>
       </div>
+      <NoticeModal
+        open={!!notice}
+        onOpenChange={(open) => !open && setNotice(null)}
+        title={notice?.title || "Notice"}
+        description={notice ? <p>{notice.message}</p> : null}
+      />
       <AppFooter />
     </div>
   );
