@@ -9,6 +9,13 @@ body {
   background: #f8fafc;
 }
 
+/* Google Identity Services iframe ignores CSS width; clip and constrain the wrapper. */
+.google-login-button > div,
+.google-login-button > div > div,
+.google-login-button iframe {
+  max-width: 100% !important;
+}
+
 .rdg-light {
   --rdg-color: #0f172a;
   --rdg-border-color: #e2e8f0;

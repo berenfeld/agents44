@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
 import { api } from "@/api/client";
 import { AppFooter } from "@/components/ui/app-footer";
@@ -16,6 +16,60 @@ type GoogleLoginConfig = {
 
 const defaultDevEmail = import.meta.env.DEV_LOGIN_EMAIL || "";
 const defaultDevPassword = import.meta.env.DEV_LOGIN_PASSWORD || "";
+
+/** Google Identity Services accepts 200–400px button widths. */
+const GOOGLE_BUTTON_MIN_WIDTH = 200;
+const GOOGLE_BUTTON_MAX_WIDTH = 400;
+
+function FittedGoogleLogin({
+  onSuccess,
+  onError,
+}: {
+  onSuccess: (credential: string) => Promise<void> | void;
+  onError: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [buttonWidth, setButtonWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) {
+      return;
+    }
+
+    const updateWidth = () => {
+      const next = Math.round(el.getBoundingClientRect().width);
+      if (next <= 0) {
+        return;
+      }
+      const clamped = Math.min(GOOGLE_BUTTON_MAX_WIDTH, Math.max(GOOGLE_BUTTON_MIN_WIDTH, next));
+      setButtonWidth((prev) => (prev === clamped ? prev : clamped));
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className="google-login-button w-full overflow-hidden">
+      {buttonWidth ? (
+        <GoogleLogin
+          key={buttonWidth}
+          onSuccess={async (response) => {
+            if (response.credential) {
+              await onSuccess(response.credential);
+            }
+          }}
+          onError={onError}
+          useOneTap={false}
+          width={String(buttonWidth)}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 export default function LoginPage({ onLogin }: { onLogin: () => void }) {
   const [devLoginEnabled, setDevLoginEnabled] = useState(Boolean(defaultDevEmail));
@@ -51,24 +105,20 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
 
   const googleButton = googleLogin ? (
     <GoogleOAuthProvider clientId={googleLogin.clientId}>
-      <div className="flex justify-center">
-        <GoogleLogin
-          onSuccess={async (response) => {
-            setGoogleError(null);
-            try {
-              await api.post("/auth/google", { credential: response.credential });
-              onLogin();
-            } catch {
-              setGoogleError("Google sign-in failed. Check that your email is allowed.");
-            }
-          }}
-          onError={() => {
-            setGoogleError("Google sign-in was cancelled or failed.");
-          }}
-          useOneTap={false}
-          width="360"
-        />
-      </div>
+      <FittedGoogleLogin
+        onSuccess={async (credential) => {
+          setGoogleError(null);
+          try {
+            await api.post("/auth/google", { credential });
+            onLogin();
+          } catch {
+            setGoogleError("Google sign-in failed. Check that your email is allowed.");
+          }
+        }}
+        onError={() => {
+          setGoogleError("Google sign-in was cancelled or failed.");
+        }}
+      />
     </GoogleOAuthProvider>
   ) : null;
 
