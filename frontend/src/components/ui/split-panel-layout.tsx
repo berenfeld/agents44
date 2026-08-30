@@ -61,6 +61,18 @@ export function SplitPanelLayout({
     window.localStorage.setItem(sidebarWidthKey, String(sidebarWidth));
   }, [sidebarWidth, sidebarWidthKey]);
 
+  useEffect(() => {
+    if (!dragging) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [dragging]);
+
   const onResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -85,11 +97,11 @@ export function SplitPanelLayout({
     <div className={cn("flex w-full flex-col gap-4 md:flex-row md:items-stretch md:gap-0", className)}>
       <aside
         className={cn(
-          "w-full shrink-0",
-          sidebarCollapsed ? "md:hidden" : "md:w-[var(--sidebar-width)]",
+          "w-full shrink-0 max-md:!w-full",
+          sidebarCollapsed && "md:hidden",
           sidebarClassName,
         )}
-        style={sidebarCollapsed ? undefined : { ["--sidebar-width" as string]: `${sidebarWidth}px` }}
+        style={sidebarCollapsed ? undefined : { width: sidebarWidth }}
       >
         {sidebar}
       </aside>
@@ -103,7 +115,7 @@ export function SplitPanelLayout({
           tabIndex={0}
           title="Drag to resize. Double-click to reset."
           className={cn(
-            "relative z-20 hidden w-4 shrink-0 cursor-col-resize select-none flex-col items-center justify-center md:flex",
+            "relative z-20 hidden w-4 shrink-0 cursor-col-resize touch-none select-none flex-col items-center justify-center md:flex",
             "text-slate-400 hover:bg-slate-100 hover:text-slate-700",
             dragging && "bg-slate-200 text-slate-800",
           )}
