@@ -79,6 +79,5 @@ def update_params():
             db.session.add(
                 SystemParam(key=key, value=item.get("value", ""), description=item.get("description"))
             )
-    db.session.commit()
     rows = SystemParam.query.order_by(SystemParam.key).all()
     return jsonify([row.to_dict() for row in rows])

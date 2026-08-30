@@ -18,20 +18,23 @@ Full text: `README.coding-guidelines.md`. Do not ship a user-initiated backend c
 
 ## Backend mutations
 
-1. Validate **all** inputs and pre-conditions first. Fail with `APIClientError("operator-safe message", 4xx)`.
-2. Then do the write (DB, schema, files) in **one** transaction — no commit-then-fail.
-3. Unexpected failure after checks → 500. Do not put stack traces in the JSON body.
+1. Validate **all** inputs first. Fail with `APIClientError("operator-safe message", 4xx)`.
+2. Then mutate with **no try/except** in the view. `@api_endpoint` commits on success and rolls back on any exception. Unhandled errors log a **full stack trace** and return 500.
+3. Do not `commit()`/`rollback()` in API views. Do not catch-and-continue. `DROP … IF EXISTS` is OK.
 
 ```python
-# ❌ BAD: commit, then 500, row remains
+# ❌ BAD
 db.session.commit()
 create_department_schema(conn, name)
+except Exception:
+    logger.warning("continuing")
 
-# ✅ GOOD: checks first, then one transaction
+# ✅ GOOD
 name = validate_department_name(...)
-if exists: raise APIClientError("Department already exists", 400)
+if exists:
+    raise APIClientError("Department already exists", 400)
 db.session.flush()
 create_department_schema(conn, name)
 ensure_department_folder(name)
-db.session.commit()
+return jsonify(row.to_dict()), 201
 ```

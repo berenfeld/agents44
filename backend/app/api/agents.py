@@ -138,7 +138,6 @@ def create_agent():
     db.session.add(agent)
     db.session.flush()
     refresh_all_cross_grants(conn)
-    db.session.commit()
     ensure_agent_folder(agent.name)
     sync_scheduler_jobs()
     return jsonify(agent.to_dict()), 201
@@ -171,7 +170,6 @@ def update_agent(agent_id: int):
     previous_timeout = agent.timeout_seconds
     for key, value in data.items():
         setattr(agent, key, value)
-    db.session.commit()
     if "timeout_seconds" in data and data["timeout_seconds"] != previous_timeout:
         from app.services.agent_runner import sync_agent_run_timeout
 
@@ -192,7 +190,6 @@ def delete_agent(agent_id: int):
     db.session.delete(agent)
     db.session.flush()
     refresh_all_cross_grants(conn)
-    db.session.commit()
     sync_scheduler_jobs()
     return jsonify({"deleted": agent_id})
 

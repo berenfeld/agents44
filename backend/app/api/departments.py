@@ -1,8 +1,5 @@
-import logging
-
 from flask import Blueprint, jsonify, request
 from marshmallow import Schema, fields, validate
-from sqlalchemy.exc import IntegrityError
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -14,8 +11,6 @@ from app.services.db_provisioning import (
     refresh_all_cross_grants,
 )
 from app.services.workspace import ensure_department_folder, validate_department_name
-
-logger = logging.getLogger(__name__)
 
 departments_bp = Blueprint("departments", __name__)
 
@@ -43,25 +38,11 @@ def create_department():
 
     row = SystemDepartment(name=name)
     db.session.add(row)
-    try:
-        db.session.flush()
-        conn = db.session.connection()
-        create_department_schema(conn, name)
-        ensure_department_folder(name)
-        refresh_all_cross_grants(conn)
-        db.session.commit()
-    except APIClientError:
-        db.session.rollback()
-        raise
-    except ValueError as exc:
-        db.session.rollback()
-        raise APIClientError(str(exc), 400) from exc
-    except IntegrityError:
-        db.session.rollback()
-        raise APIClientError("Department already exists", 400)
-    except Exception:
-        db.session.rollback()
-        raise
+    db.session.flush()
+    conn = db.session.connection()
+    create_department_schema(conn, name)
+    ensure_department_folder(name)
+    refresh_all_cross_grants(conn)
     return jsonify(row.to_dict()), 201
 
 
@@ -75,15 +56,9 @@ def delete_department(department_id: int):
     if SystemAgent.query.filter_by(department=row.name).first():
         raise APIClientError("Department is in use by one or more agents", 400)
 
-    name = row.name
     conn = db.session.connection()
-    drop_department_schema(conn, name)
+    drop_department_schema(conn, row.name)
     db.session.delete(row)
     db.session.flush()
-    try:
-        with conn.begin_nested():
-            refresh_all_cross_grants(conn)
-    except Exception:
-        logger.warning("Could not refresh grants after deleting department %s", name, exc_info=True)
-    db.session.commit()
+    refresh_all_cross_grants(conn)
     return jsonify({"deleted": department_id})

@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,11 +9,8 @@ from app.services.db_provisioning import (
     DEPARTMENT_NAME_RE,
     SYSTEM_SCHEMAS,
     create_department_schema,
-    department_schema_name,
     refresh_all_cross_grants,
 )
-
-logger = logging.getLogger(__name__)
 
 COMMON_INPUT = "common_input"
 DEPARTMENT_INPUT = "input"
@@ -42,10 +38,6 @@ def validate_department_name(name: str) -> str:
         )
     if normalized in SYSTEM_SCHEMAS:
         raise APIClientError(f"Department name '{normalized}' is reserved", 400)
-    try:
-        department_schema_name(normalized)
-    except ValueError as exc:
-        raise APIClientError(str(exc), 400) from exc
     safe_path(normalized)
     return normalized
 
@@ -70,10 +62,7 @@ def ensure_workspace_layout() -> None:
 
     conn = db.session.connection()
     for dept in departments:
-        try:
-            create_department_schema(conn, dept.name)
-        except ValueError as exc:
-            logger.warning("Could not provision schema for department %s: %s", dept.name, exc)
+        create_department_schema(conn, dept.name)
     refresh_all_cross_grants(conn)
     db.session.commit()
 

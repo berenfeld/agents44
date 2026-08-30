@@ -5,6 +5,7 @@ from flask import Response, jsonify, make_response, request
 from marshmallow import ValidationError
 from werkzeug.exceptions import HTTPException
 
+from app.extensions import db
 from app.middleware.logging import log_api_request, log_api_response
 
 logger = logging.getLogger(__name__)
@@ -35,14 +36,22 @@ def _coerce_response(result):
 
 
 def api_endpoint(view_func):
+    """Run every API view in one DB transaction: commit on success, rollback on any error.
+
+    Unhandled exceptions are logged with a full stack trace and returned as 500.
+    Views must not catch-and-continue; raise APIClientError for expected 4xx.
+    """
+
     @wraps(view_func)
     def wrapper(*args, **kwargs):
         log_api_request()
         try:
             result = view_func(*args, **kwargs)
             response = _coerce_response(result)
+            db.session.commit()
             return log_api_response(response)
         except APIClientError as exc:
+            db.session.rollback()
             logger.error(
                 "API client error on %s %s: %s (status=%s)",
                 request.method,
@@ -53,6 +62,7 @@ def api_endpoint(view_func):
             response = make_response(jsonify({"error": exc.message}), exc.status_code)
             return log_api_response(response)
         except ValidationError as exc:
+            db.session.rollback()
             logger.error(
                 "Validation error on %s %s: %s",
                 request.method,
@@ -62,10 +72,12 @@ def api_endpoint(view_func):
             response = make_response(jsonify({"error": exc.messages}), 400)
             return log_api_response(response)
         except FileNotFoundError:
+            db.session.rollback()
             logger.error("Not found on %s %s", request.method, request.path)
             response = make_response(jsonify({"error": "Not found"}), 404)
             return log_api_response(response)
         except HTTPException as exc:
+            db.session.rollback()
             logger.error(
                 "HTTP error on %s %s: %s (status=%s)",
                 request.method,
@@ -73,8 +85,13 @@ def api_endpoint(view_func):
                 exc.description or exc.name,
                 exc.code or 500,
             )
+            response = make_response(
+                jsonify({"error": exc.description or exc.name}),
+                exc.code or 500,
+            )
             return log_api_response(response)
         except Exception:
+            db.session.rollback()
             logger.exception("Unhandled API error on %s %s", request.method, request.path)
             response = make_response(jsonify({"error": INTERNAL_ERROR_MESSAGE}), 500)
             return log_api_response(response)

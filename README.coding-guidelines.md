@@ -30,33 +30,50 @@ try {
 
 Page load / polling (health, lists) may use inline empty/error states. Those are not user-initiated mutations.
 
-## Backend: validate first (4xx), then mutate (500 only if unexpected)
+## Backend: validate first (4xx), then mutate
 
 Do **all** input and pre-condition checks **before** any write (DB row, schema, file, subprocess).
 
 Checks that fail are **expected client errors**: raise `APIClientError("clear operator message", 4xx)`. The JSON body is `{"error": "<message>"}`. That message is what the modal shows.
 
-Only after checks pass, run the operation in one transaction (flush/commit **after** side effects that must succeed together). If that work fails for an unexpected reason, let it become **500**. Do not commit a row and then fail on schema/folder creation.
+Then do the operation with **no local try/except**. `@api_endpoint` (`backend/app/errors.py`) owns the transaction for every API request:
+
+- **success** — `db.session.commit()`
+- **any exception** — `db.session.rollback()`, then 4xx or 500
+- **unhandled exception** — `logger.exception` (full stack trace) and `{"error": "Internal server error"}` (500). The UI shows **Unexpected server error**.
+
+Flask-SQLAlchemy does **not** auto-commit. Do not call `db.session.commit()` / `rollback()` in API views or in services they call. Background jobs (agent runner, scheduler, startup) still commit themselves.
 
 ```python
-name = validate_department_name(data["name"])  # 400 with a clear message
+# ✅ GOOD — checks, then work; decorator commits or rolls back
+name = validate_department_name(data["name"])
 if SystemDepartment.query.filter_by(name=name).first():
     raise APIClientError("Department already exists", 400)
-
 row = SystemDepartment(name=name)
 db.session.add(row)
+db.session.flush()
+create_department_schema(conn, name)
+ensure_department_folder(name)
+return jsonify(row.to_dict()), 201
+
+# ❌ BAD — try/except in the view, commit-then-fail, swallow and continue
 try:
-    db.session.flush()
-    create_department_schema(conn, name)
-    ensure_department_folder(name)
     db.session.commit()
-except APIClientError:
-    db.session.rollback()
-    raise
+    create_department_schema(conn, name)
 except Exception:
-    db.session.rollback()
-    raise  # 500 — frontend shows "Unexpected server error"
+    logger.warning("schema failed, continuing")
 ```
+
+Idempotent SQL (`DROP SCHEMA IF EXISTS`) is allowed. Catching an error and continuing is not.
+
+## No try/except in backend (almost)
+
+Do **not** add `try/except` in API views or services to hide failures.
+
+Allowed:
+
+1. **`@api_endpoint` only** — the common decorator: log, rollback, 4xx/500.
+2. **Narrow logic parses** — e.g. `except (ValueError, json.JSONDecodeError)` when converting a string, then raise `APIClientError` or use a documented default. Not “log and keep going” on a mutation.
 
 | Status | When | Frontend modal |
 |--------|------|----------------|
@@ -64,10 +81,8 @@ except Exception:
 | 4xx | Bad input, conflict, not allowed | Backend `error` text |
 | 5xx | Unexpected failure after checks | `Unexpected server error` |
 
-`APIClientError` is the 4xx path. Do not turn expected validation into `ValueError` / unhandled 500.
-
 ## Related files
 
 - `frontend/src/components/ui/modal.tsx` — `NoticeModal`, `ConfirmModal`
 - `frontend/src/api/client.ts` — `apiErrorMessage`, `userFacingApiError`
-- `backend/app/errors.py` — `APIClientError`, `@api_endpoint`
+- `backend/app/errors.py` — `APIClientError`, `@api_endpoint` (commit / rollback / stack trace)

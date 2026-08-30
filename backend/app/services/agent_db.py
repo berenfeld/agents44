@@ -376,10 +376,8 @@ def insert_row(table_name: str, values: dict) -> dict:
     if db.engine.dialect.name == "postgresql":
         stmt = stmt.returning(*reflected.c)
         row = db.session.execute(stmt).mappings().one()
-        db.session.commit()
         return _serialize_row(row)
     db.session.execute(stmt)
-    db.session.commit()
     schema_info = get_table_schema(table_name)
     if schema_info["primary_keys"]:
         keys = {pk: payload[pk] for pk in schema_info["primary_keys"] if pk in payload}
@@ -424,12 +422,10 @@ def update_row(table_name: str, keys: dict, values: dict) -> dict:
     if db.engine.dialect.name == "postgresql":
         stmt = stmt.returning(*reflected.c)
         row = db.session.execute(stmt).mappings().one_or_none()
-        db.session.commit()
         if row is None:
             raise APIClientError("Row not found", 404)
         return _serialize_row(row)
     result = db.session.execute(stmt)
-    db.session.commit()
     if result.rowcount == 0:
         raise APIClientError("Row not found", 404)
     row = db.session.execute(select(reflected).where(*where)).mappings().one()
@@ -443,7 +439,6 @@ def delete_row(table_name: str, keys: dict) -> dict:
     where = _pk_where(reflected, keys, schema_info)
     stmt = delete(reflected).where(*where)
     result = db.session.execute(stmt)
-    db.session.commit()
     if result.rowcount == 0:
         raise APIClientError("Row not found", 404)
     return {"deleted": True, "keys": keys}
@@ -458,7 +453,6 @@ def drop_table(table_name: str) -> dict:
     schema, table = _parse_qualified_table(table_name)
     qualified = _qualified_name(schema, table)
     db.session.execute(text(f"DROP TABLE {_quote_ident(schema, table)}"))
-    db.session.commit()
     return {"dropped": True, "qualified_name": qualified}
 
 
@@ -475,7 +469,6 @@ def rename_table(table_name: str, new_name: str) -> dict:
         db.session.execute(
             text(f"ALTER TABLE {_quote_ident(schema, table)} RENAME TO {db.engine.dialect.identifier_preparer.quote(new_table)}")
         )
-        db.session.commit()
     return {
         "schema": schema,
         "name": new_table,
