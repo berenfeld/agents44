@@ -149,7 +149,8 @@ export default function AgentsRunsPage() {
       tokens: (run: AgentRun) => runTokensTotal(run.tokens_in, run.tokens_out),
       estimated_cost_usd: (run: AgentRun) => run.estimated_cost_usd,
       trigger_source: (run: AgentRun) => run.trigger_source,
-      started_at: (run: AgentRun) => run.started_at ?? "",
+      started_at: (run: AgentRun) =>
+        run.started_at ?? (isActiveRun(run.status) ? "9999-12-31T23:59:59Z" : ""),
       duration: (run: AgentRun) => runDurationSeconds(run.started_at, run.finished_at) ?? -1,
       prompt_preview: (run: AgentRun) => run.prompt_preview ?? "",
     }),

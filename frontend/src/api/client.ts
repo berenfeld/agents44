@@ -62,6 +62,7 @@ export type Agent = {
   enabled: boolean;
   timeout_seconds: number;
   is_running: boolean;
+  is_pending: boolean;
   active_run?: AgentActiveRun | null;
 };
 

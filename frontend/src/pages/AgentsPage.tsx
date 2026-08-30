@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Agent, api, buildAgentWritePayload, Department, ModelsResponse } from "@/api/client";
 import { AgentDetailSummary } from "@/components/agents/AgentDetailSummary";
 import { AgentFormDialog } from "@/components/agents/AgentFormDialog";
-import { AgentRunningTag } from "@/components/agents/AgentRunningTag";
+import { AgentRunStateTag } from "@/components/agents/AgentRunningTag";
 import {
   EnabledToggle,
   InlineCrondInput,
@@ -105,6 +105,7 @@ export default function AgentsPage() {
         if (!fresh) return agent;
         if (
           fresh.is_running === agent.is_running &&
+          fresh.is_pending === agent.is_pending &&
           fresh.active_run?.id === agent.active_run?.id &&
           fresh.active_run?.timeout_seconds === agent.active_run?.timeout_seconds
         ) {
@@ -113,6 +114,7 @@ export default function AgentsPage() {
         return {
           ...agent,
           is_running: fresh.is_running,
+          is_pending: fresh.is_pending,
           active_run: fresh.active_run,
         };
       }),
@@ -268,7 +270,8 @@ export default function AgentsPage() {
                     <td className="px-4 py-2 font-medium">
                       <span className="inline-flex items-center gap-2">
                         {agent.name}
-                        {agent.is_running ? <AgentRunningTag /> : null}
+                        {agent.is_running ? <AgentRunStateTag status="running" /> : null}
+                        {agent.is_pending ? <AgentRunStateTag status="pending" /> : null}
                       </span>
                     </td>
                     <td className="px-4 py-2">{agent.department}</td>
@@ -328,7 +331,8 @@ export default function AgentsPage() {
                 <DataCardTitle>
                   <span className="inline-flex items-center gap-2">
                     {agent.name}
-                    {agent.is_running ? <AgentRunningTag /> : null}
+                    {agent.is_running ? <AgentRunStateTag status="running" /> : null}
+                    {agent.is_pending ? <AgentRunStateTag status="pending" /> : null}
                   </span>
                 </DataCardTitle>
                 <dl>

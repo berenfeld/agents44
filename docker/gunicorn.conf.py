@@ -1,7 +1,7 @@
-import multiprocessing
-
 bind = "127.0.0.1:5000"
-workers = max(2, multiprocessing.cpu_count())
+# One worker: the agent runner keeps the run queue, live timeout, subprocess,
+# and stop signal in this process. Extra workers split that state.
+workers = 1
 accesslog = "-"
 errorlog = "-"
 capture_output = True

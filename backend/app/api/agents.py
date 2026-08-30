@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from marshmallow import EXCLUDE, Schema, ValidationError, fields, pre_load, validate
-from sqlalchemy import select
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -59,17 +58,8 @@ def _require_department(name: str) -> str:
     return department
 
 
-def _active_run_agent_ids() -> set[int]:
-    rows = db.session.execute(
-        select(SystemAgentRun.agent_id)
-        .where(SystemAgentRun.status.in_((RunStatus.pending, RunStatus.running)))
-        .distinct()
-    ).scalars()
-    return set(rows)
-
-
-def _running_runs_by_agent() -> dict[int, SystemAgentRun]:
-    runs = SystemAgentRun.query.filter_by(status=RunStatus.running).all()
+def _runs_by_agent_status(status: RunStatus) -> dict[int, SystemAgentRun]:
+    runs = SystemAgentRun.query.filter_by(status=status).order_by(SystemAgentRun.id.asc()).all()
     return {run.agent_id: run for run in runs}
 
 
@@ -99,11 +89,15 @@ def _active_run_dict(run: SystemAgentRun, agent: SystemAgent) -> dict:
 @login_required
 def list_agents():
     agents = SystemAgent.query.order_by(SystemAgent.name).all()
-    active_ids = _active_run_agent_ids()
-    running_runs = _running_runs_by_agent()
+    running_runs = _runs_by_agent_status(RunStatus.running)
+    pending_runs = _runs_by_agent_status(RunStatus.pending)
     payload = []
     for agent in agents:
-        item = {**agent.to_dict(), "is_running": agent.id in active_ids}
+        item = {
+            **agent.to_dict(),
+            "is_running": agent.id in running_runs,
+            "is_pending": agent.id in pending_runs,
+        }
         running_run = running_runs.get(agent.id)
         if running_run:
             item["active_run"] = _active_run_dict(running_run, agent)

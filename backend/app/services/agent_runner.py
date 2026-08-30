@@ -100,19 +100,55 @@ def _get_active_proc(run_id: int) -> subprocess.Popen | None:
         return _active_procs.get(run_id)
 
 
+def _run_timeout_path(run_id: int) -> Path:
+    runtime_dir = Path(current_app.config["RUNTIME_DIR"])
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    return runtime_dir / f"timeout-run-{run_id}.txt"
+
+
+def _write_run_timeout(run_id: int, timeout_seconds: int) -> None:
+    _run_timeout_path(run_id).write_text(str(timeout_seconds), encoding="utf-8")
+    with _active_run_timeouts_lock:
+        _active_run_timeouts[run_id] = timeout_seconds
+
+
+def _read_run_timeout(run_id: int) -> int | None:
+    path = _run_timeout_path(run_id)
+    if path.exists():
+        raw = path.read_text(encoding="utf-8").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = None
+        if value is not None and value >= 1:
+            with _active_run_timeouts_lock:
+                _active_run_timeouts[run_id] = value
+            return value
+    with _active_run_timeouts_lock:
+        return _active_run_timeouts.get(run_id)
+
+
 def _register_run_timeout(run_id: int, timeout_seconds: int) -> None:
+    # Exclusive create so a bump from another gunicorn worker is not overwritten.
+    path = _run_timeout_path(run_id)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(str(timeout_seconds))
     with _active_run_timeouts_lock:
         _active_run_timeouts[run_id] = timeout_seconds
 
 
 def _unregister_run_timeout(run_id: int) -> None:
+    _run_timeout_path(run_id).unlink(missing_ok=True)
     with _active_run_timeouts_lock:
         _active_run_timeouts.pop(run_id, None)
 
 
 def get_active_run_timeout(run_id: int) -> int | None:
-    with _active_run_timeouts_lock:
-        return _active_run_timeouts.get(run_id)
+    return _read_run_timeout(run_id)
 
 
 def sync_agent_run_timeout(agent_id: int, timeout_seconds: int) -> None:
@@ -121,8 +157,7 @@ def sync_agent_run_timeout(agent_id: int, timeout_seconds: int) -> None:
         return
 
     previous = get_active_run_timeout(run.id)
-    with _active_run_timeouts_lock:
-        _active_run_timeouts[run.id] = timeout_seconds
+    _write_run_timeout(run.id, timeout_seconds)
 
     if run.log_path:
         log_path = safe_path(run.log_path)
