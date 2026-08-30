@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
-import { api } from "@/api/client";
+import { api, userFacingApiError } from "@/api/client";
 import { AppFooter } from "@/components/ui/app-footer";
 import { Button, Input, Label } from "@/components/ui/primitives";
 
@@ -17,14 +17,6 @@ type GoogleLoginConfig = {
 const defaultDevEmail = import.meta.env.DEV_LOGIN_EMAIL || "";
 // Production image is built without .env — never prefill a stale local password.
 const defaultDevPassword = import.meta.env.DEV ? import.meta.env.DEV_LOGIN_PASSWORD || "" : "";
-
-function apiErrorMessage(err: unknown): string | null {
-  if (typeof err !== "object" || err === null || !("response" in err)) {
-    return null;
-  }
-  const payload = (err as { response?: { data?: { error?: unknown } } }).response?.data?.error;
-  return typeof payload === "string" && payload.trim() ? payload : null;
-}
 
 /** Google Identity Services accepts 200–400px button widths. */
 const GOOGLE_BUTTON_MIN_WIDTH = 200;
@@ -104,7 +96,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
       await api.post("/auth/dev-login", { email, password });
       await onLogin();
     } catch (err) {
-      setDevError(apiErrorMessage(err) || "Dev login failed. Check the email and password.");
+      setDevError(userFacingApiError(err));
     } finally {
       setDevSubmitting(false);
     }
@@ -144,9 +136,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
             await api.post("/auth/google", { credential });
             await onLogin();
           } catch (err) {
-            setGoogleError(
-              apiErrorMessage(err) || "Google sign-in failed. Check that your email is allowed.",
-            );
+            setGoogleError(userFacingApiError(err));
           }
         }}
         onError={() => {

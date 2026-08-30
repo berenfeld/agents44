@@ -1,0 +1,37 @@
+---
+description: Agents44 UX feedback and API error handling for any code change
+alwaysApply: true
+---
+
+# Agents44 coding rules
+
+Full text: `README.coding-guidelines.md`. Do not ship a user-initiated backend call without UI feedback.
+
+## User-initiated actions (create, delete, save, trigger, login)
+
+- Show **busy** state on the control while the request runs.
+- Show the **result in a modal** (`NoticeModal` for outcome, `ConfirmModal` before destructive actions). Inline red text may supplement; it must not replace the modal.
+- Never swallow errors (`catch {}` or uncaught Axios 4xx/5xx).
+
+4xx → show backend `{"error": "..."}` via `userFacingApiError`.
+5xx / network → show **`Unexpected server error`**.
+
+## Backend mutations
+
+1. Validate **all** inputs and pre-conditions first. Fail with `APIClientError("operator-safe message", 4xx)`.
+2. Then do the write (DB, schema, files) in **one** transaction — no commit-then-fail.
+3. Unexpected failure after checks → 500. Do not put stack traces in the JSON body.
+
+```python
+# ❌ BAD: commit, then 500, row remains
+db.session.commit()
+create_department_schema(conn, name)
+
+# ✅ GOOD: checks first, then one transaction
+name = validate_department_name(...)
+if exists: raise APIClientError("Department already exists", 400)
+db.session.flush()
+create_department_schema(conn, name)
+ensure_department_folder(name)
+db.session.commit()
+```

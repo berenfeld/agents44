@@ -55,7 +55,7 @@ Or equivalently: `docker compose up --build`.
 
 ## Deploy to AWS
 
-See **[README.deployment.md](README.deployment.md)**.
+See **[README.deployment.md](README.deployment.md)**. Coding conventions for agents: **[README.coding-guidelines.md](README.coding-guidelines.md)**.
 
 GitHub Actions builds the same image on every push to `main` and pushes to Amazon ECR.
 
