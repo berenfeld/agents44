@@ -1,9 +1,9 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.models import SystemAgent, SystemDepartment
-from app.services.workspace import COMMON_INPUT, delete_path, list_path, rename_file, write_file
+from app.services.workspace import COMMON_INPUT, delete_path, list_path, rename_file, workspace_file_path, write_file
 
 files_bp = Blueprint("files", __name__)
 
@@ -14,6 +14,23 @@ files_bp = Blueprint("files", __name__)
 def get_files():
     path = request.args.get("path", "")
     return jsonify(list_path(path))
+
+
+@files_bp.get("/raw")
+@api_endpoint
+@login_required
+def get_raw_file():
+    target = workspace_file_path(request.args.get("path", ""))
+    if target.suffix.lower() != ".pdf":
+        raise APIClientError("Only PDF files can be previewed or downloaded this way", 400)
+    download = request.args.get("download") == "1"
+    return send_file(
+        target,
+        mimetype="application/pdf",
+        as_attachment=download,
+        download_name=target.name,
+        max_age=0,
+    )
 
 
 @files_bp.post("")

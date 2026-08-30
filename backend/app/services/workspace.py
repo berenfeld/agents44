@@ -111,14 +111,31 @@ def _file_stat_fields(path: Path) -> dict:
     }
 
 
+def workspace_file_path(relative: str) -> Path:
+    if not str(relative or "").strip():
+        raise APIClientError("path is required", 400)
+    target = safe_path(relative)
+    if not target.exists():
+        raise FileNotFoundError(relative)
+    if target.is_dir():
+        raise APIClientError("Path is a directory", 400)
+    return target
+
+
 def list_path(path: str = "") -> dict:
     target = safe_path(path)
     if not target.exists():
         raise FileNotFoundError(path)
     if target.is_file():
-        content = target.read_text(encoding="utf-8")
         rel = str(target.relative_to(workspace_root()))
-        return {"path": rel, "is_dir": False, "content": content, **_file_stat_fields(target)}
+        payload = {"path": rel, "is_dir": False, **_file_stat_fields(target)}
+        if target.suffix.lower() == ".pdf":
+            return payload
+        try:
+            payload["content"] = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            pass
+        return payload
     children = []
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         rel = str(child.relative_to(workspace_root()))

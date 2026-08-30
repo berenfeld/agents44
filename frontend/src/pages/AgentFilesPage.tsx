@@ -89,11 +89,32 @@ function isEditable(path: string) {
   return ["txt", "json", "md", "markdown", "log"].includes(ext);
 }
 
+function isPdfFile(path: string) {
+  return extension(path) === "pdf";
+}
+
+function fileRawUrl(path: string, download = false) {
+  const apiBase = String(import.meta.env.REACT_APP_API_URL || "/api").replace(/\/$/, "");
+  const params = new URLSearchParams({ path });
+  if (download) params.set("download", "1");
+  return `${apiBase}/files/raw?${params.toString()}`;
+}
+
 function formatFileSize(bytes: number | null | undefined): string {
   if (bytes == null) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatCount(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+function formatFolderSummary(entries: FileEntry[]): string {
+  const folders = entries.filter((entry) => entry.is_dir).length;
+  const files = entries.length - folders;
+  return `${formatCount(files, "file", "files")}, ${formatCount(folders, "folder", "folders")}`;
 }
 
 function formatModified(iso: string | null | undefined): string {
@@ -134,6 +155,14 @@ function TrashIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
       <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M12 3v12M8 11l4 4 4-4M5 21h14" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -271,7 +300,7 @@ export default function AgentFilesPage() {
       setContent(res.data.content || "");
       setDirty(false);
       setSaveStatus("idle");
-      setViewMode(!urlEditMode);
+      setViewMode(isPdfFile(urlPath) ? true : !urlEditMode);
       setEntries(await fetchFolder(folder));
     } catch {
       setLoadError("Could not load workspace. Run ./start-dev.sh to create ./.workspace");
@@ -432,6 +461,17 @@ export default function AgentFilesPage() {
       return <p className="text-sm text-slate-500">Select a file to view or edit.</p>;
     }
 
+    if (isPdfFile(selectedPath)) {
+      return (
+        <iframe
+          key={selectedPath}
+          title={fileName(selectedPath)}
+          src={fileRawUrl(selectedPath)}
+          className="h-full min-h-[480px] w-full border-0 bg-slate-100"
+        />
+      );
+    }
+
     const ext = extension(selectedPath);
 
     if (viewMode) {
@@ -473,38 +513,43 @@ export default function AgentFilesPage() {
 
   const renderFileSidebar = () => (
     <PanelCard className="flex flex-col">
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-        <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-xs text-slate-600">
-          <Link
-            to={`${filesUrl()}${filesQueryString(location.search)}`}
-            className="rounded px-0.5 hover:bg-slate-100 hover:text-slate-900"
+      <div className="border-b px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-xs text-slate-600">
+            <Link
+              to={`${filesUrl()}${filesQueryString(location.search)}`}
+              className="rounded px-0.5 hover:bg-slate-100 hover:text-slate-900"
+            >
+              .workspace
+            </Link>
+            {breadcrumbSegments.map((segment, index) => {
+              const path = breadcrumbSegments.slice(0, index + 1).join("/");
+              return (
+                <span key={path} className="flex min-w-0 items-center gap-0.5">
+                  <span className="text-slate-400">/</span>
+                  <Link
+                    to={`${filesUrl(path)}${filesQueryString(location.search)}`}
+                    className="truncate rounded px-0.5 hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    {segment}
+                  </Link>
+                </span>
+              );
+            })}
+          </nav>
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title="Collapse files panel"
+            aria-label="Collapse files panel"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
           >
-            .workspace
-          </Link>
-          {breadcrumbSegments.map((segment, index) => {
-            const path = breadcrumbSegments.slice(0, index + 1).join("/");
-            return (
-              <span key={path} className="flex min-w-0 items-center gap-0.5">
-                <span className="text-slate-400">/</span>
-                <Link
-                  to={`${filesUrl(path)}${filesQueryString(location.search)}`}
-                  className="truncate rounded px-0.5 hover:bg-slate-100 hover:text-slate-900"
-                >
-                  {segment}
-                </Link>
-              </span>
-            );
-          })}
-        </nav>
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          title="Collapse files panel"
-          aria-label="Collapse files panel"
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-        >
-          <PanelLeftCloseIcon />
-        </button>
+            <PanelLeftCloseIcon />
+          </button>
+        </div>
+        {loading ? null : (
+          <p className="mt-1 text-xs text-slate-500">{formatFolderSummary(entries)}</p>
+        )}
       </div>
 
       {loading ? (
@@ -615,7 +660,12 @@ export default function AgentFilesPage() {
         sidebarCollapsed={sidebarCollapsed}
         sidebar={renderFileSidebar()}
       >
-        <div className="flex flex-col rounded-lg border bg-white">
+        <div
+          className={cn(
+            "flex flex-col rounded-lg border bg-white",
+            selectedPath && isPdfFile(selectedPath) && "md:h-[calc(100vh-11rem)]",
+          )}
+        >
           <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b px-2 py-1.5">
             {sidebarCollapsed ? (
               <ToolbarIconButton
@@ -643,6 +693,17 @@ export default function AgentFilesPage() {
                   </span>
                 ) : null}
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                  {isPdfFile(selectedPath) ? (
+                    <a
+                      href={fileRawUrl(selectedPath, true)}
+                      download={fileName(selectedPath)}
+                      title="Download PDF"
+                      aria-label="Download PDF"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    >
+                      <DownloadIcon />
+                    </a>
+                  ) : null}
                   {viewMode ? (
                     isEditable(selectedPath) ? (
                       <Button variant="outline" className="h-8 px-2.5 text-xs" onClick={() => setFileMode("edit")}>
@@ -735,7 +796,14 @@ export default function AgentFilesPage() {
             )}
           </div>
 
-          <div className="min-w-0 p-4">{renderFileContent()}</div>
+          <div
+            className={cn(
+              "min-w-0",
+              selectedPath && isPdfFile(selectedPath) ? "min-h-0 flex-1 p-0" : "p-4",
+            )}
+          >
+            {renderFileContent()}
+          </div>
         </div>
       </SplitPanelLayout>
 
