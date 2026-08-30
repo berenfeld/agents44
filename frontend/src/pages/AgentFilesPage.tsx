@@ -610,7 +610,11 @@ export default function AgentFilesPage() {
 
       {loadError ? <p className="rounded bg-amber-50 p-3 text-sm text-amber-900">{loadError}</p> : null}
 
-      <SplitPanelLayout sidebarClassName={sidebarCollapsed ? "md:hidden" : undefined} sidebar={renderFileSidebar()}>
+      <SplitPanelLayout
+        sidebarWidthKey="agents44.agentFiles.sidebarWidth"
+        sidebarCollapsed={sidebarCollapsed}
+        sidebar={renderFileSidebar()}
+      >
         <div className="flex flex-col rounded-lg border bg-white">
           <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b px-2 py-1.5">
             {sidebarCollapsed ? (

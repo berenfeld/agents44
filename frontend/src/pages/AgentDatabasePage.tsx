@@ -1289,7 +1289,10 @@ export default function AgentDatabasePage() {
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
 
-      <SplitPanelLayout sidebarClassName={sidebarCollapsed ? "md:hidden" : undefined} sidebar={
+      <SplitPanelLayout
+        sidebarWidthKey="agents44.agentDatabase.sidebarWidth"
+        sidebarCollapsed={sidebarCollapsed}
+        sidebar={
           <>
             <div className="md:hidden">
               <label htmlFor="table-picker" className="mb-1 block text-sm font-medium text-slate-700">

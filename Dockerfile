@@ -72,14 +72,17 @@ ENV PGDATA=/var/lib/psql/data \
     PATH=/root/.local/bin:/opt/agents44/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     IS_SANDBOX=1
 
-# Heavy OS packages + Claude CLI — must not depend on APP_VERSION
+# Heavy OS packages + Claude CLI — must not depend on APP_VERSION.
+# python3.12-venv + pip: agents create their own venvs (`ensurepip` is skipped without them).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
         nginx \
         postgresql-common \
         python3 \
+        python3-pip \
         python3-venv \
+        python3.12-venv \
         tini \
         unzip \
         xz-utils \
