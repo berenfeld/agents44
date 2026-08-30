@@ -24,7 +24,7 @@ DEV_LOGIN_PASSWORD="$(generate_password 32)"
 
 cat <<EOF
 # Strong passwords for agents44 — $(date -u +%Y-%m-%dT%H:%M:%SZ)
-# Copy into ${ROOT}/.env (or /opt/agents44/.env on the server).
+# Copy into ${ROOT}/.env (local) or ~/.agents/<name>/.env (Lightsail).
 
 PSQL_HOST=${PSQL_HOST}
 PSQL_PORT=${PSQL_PORT}
@@ -33,7 +33,4 @@ PSQL_USER=${PSQL_USER}
 PSQL_PASSWORD=${PSQL_PASSWORD}
 FLASK_SECRET_KEY=${FLASK_SECRET_KEY}
 DEV_LOGIN_PASSWORD=${DEV_LOGIN_PASSWORD}
-
-# Sync PostgreSQL after updating .env:
-#   sudo bash deploy/scripts/sync-psql-password.sh /opt/agents44/.env
 EOF

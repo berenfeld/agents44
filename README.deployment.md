@@ -100,7 +100,3 @@ After the pipeline has pushed to ECR, the simplest managed option is **AWS App R
 ## Container `.env`
 
 Mount or inject the same keys as local `.env`. Inside the image, `PSQL_HOST` is forced to `localhost`. Set `FRONTEND_URL` to your public URL (App Runner URL or `https://agents.catch44.co.il`).
-
-## Legacy VM host install
-
-The old zip/SCP + `deploy/scripts/install-server.sh` path is obsolete for CI. Scripts under `deploy/` remain for reference only.
