@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from marshmallow import Schema, fields, validate
+from sqlalchemy.exc import IntegrityError
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -38,11 +39,25 @@ def create_department():
 
     row = SystemDepartment(name=name)
     db.session.add(row)
-    db.session.commit()
-    conn = db.session.connection()
-    create_department_schema(conn, name)
-    refresh_all_cross_grants(conn)
-    ensure_department_folder(name)
+    try:
+        db.session.flush()
+        conn = db.session.connection()
+        create_department_schema(conn, name)
+        ensure_department_folder(name)
+        refresh_all_cross_grants(conn)
+        db.session.commit()
+    except APIClientError:
+        db.session.rollback()
+        raise
+    except ValueError as exc:
+        db.session.rollback()
+        raise APIClientError(str(exc), 400) from exc
+    except IntegrityError:
+        db.session.rollback()
+        raise APIClientError("Department already exists", 400)
+    except Exception:
+        db.session.rollback()
+        raise
     return jsonify(row.to_dict()), 201
 
 
@@ -55,10 +70,17 @@ def delete_department(department_id: int):
         raise APIClientError("Not found", 404)
     if SystemAgent.query.filter_by(department=row.name).first():
         raise APIClientError("Department is in use by one or more agents", 400)
-    conn = db.session.connection()
-    drop_department_schema(conn, row.name)
-    db.session.delete(row)
-    db.session.flush()
-    refresh_all_cross_grants(conn)
-    db.session.commit()
+    try:
+        conn = db.session.connection()
+        drop_department_schema(conn, row.name)
+        db.session.delete(row)
+        db.session.flush()
+        refresh_all_cross_grants(conn)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        raise APIClientError(str(exc), 400) from exc
+    except Exception:
+        db.session.rollback()
+        raise
     return jsonify({"deleted": department_id})

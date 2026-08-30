@@ -56,7 +56,7 @@ export function ConfirmModal({
   title: string;
   description: React.ReactNode;
   confirmLabel: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   destructive?: boolean;
 }) {
   return (
@@ -66,9 +66,37 @@ export function ConfirmModal({
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
-        <Button variant={destructive ? "destructive" : "default"} onClick={onConfirm}>
+        <Button
+          variant={destructive ? "destructive" : "default"}
+          onClick={() => {
+            void Promise.resolve(onConfirm());
+          }}
+        >
           {confirmLabel}
         </Button>
+      </div>
+    </Modal>
+  );
+}
+
+export function NoticeModal({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel = "OK",
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: React.ReactNode;
+  confirmLabel?: string;
+}) {
+  return (
+    <Modal open={open} onOpenChange={onOpenChange} title={title}>
+      <div className="space-y-4 text-sm text-slate-600">{description}</div>
+      <div className="mt-6 flex justify-end">
+        <Button onClick={() => onOpenChange(false)}>{confirmLabel}</Button>
       </div>
     </Modal>
   );

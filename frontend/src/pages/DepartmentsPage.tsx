@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Agent, api, Department } from "@/api/client";
-import { ConfirmModal } from "@/components/ui/modal";
+import { Agent, api, userFacingApiError, Department } from "@/api/client";
+import { ConfirmModal, NoticeModal } from "@/components/ui/modal";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { Button, Input, Label } from "@/components/ui/primitives";
 import { useTableSort } from "@/hooks/useTableSort";
@@ -21,6 +21,8 @@ export default function DepartmentsPage() {
   const [name, setName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Department | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const sortAccessors = useMemo(
     () => ({
@@ -31,8 +33,10 @@ export default function DepartmentsPage() {
   );
   const { sorted, sortKey, sortDir, toggleSort } = useTableSort(departments, sortAccessors, "name");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true);
+    }
     const [deptRes, agentRes] = await Promise.all([
       api.get<Department[]>("/departments"),
       api.get<Agent[]>("/agents"),
@@ -62,12 +66,19 @@ export default function DepartmentsPage() {
         onSubmit={async (event) => {
           event.preventDefault();
           setError(null);
+          setCreating(true);
           try {
             await api.post("/departments", { name });
             setName("");
+            setNotice({ title: "Department created", message: `Created ${name.trim().toLowerCase()}.` });
             await load();
-          } catch {
-            setError("Could not create department. Use lowercase letters, numbers, underscores, or hyphens.");
+          } catch (err) {
+            const message = userFacingApiError(err);
+            setError(message);
+            setNotice({ title: "Could not create department", message });
+            await load({ silent: true }).catch(() => undefined);
+          } finally {
+            setCreating(false);
           }
         }}
       >
@@ -80,8 +91,8 @@ export default function DepartmentsPage() {
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <Button type="submit" disabled={!name.trim()}>
-          Create
+        <Button type="submit" disabled={!name.trim() || creating}>
+          {creating ? "Creating..." : "Create"}
         </Button>
       </form>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -168,10 +179,23 @@ export default function DepartmentsPage() {
         }
         onConfirm={async () => {
           if (!deleteTarget) return;
-          await api.delete(`/departments/${deleteTarget.id}`);
-          setDeleteTarget(null);
-          await load();
+          try {
+            await api.delete(`/departments/${deleteTarget.id}`);
+            setDeleteTarget(null);
+            await load();
+          } catch (err) {
+            const message = userFacingApiError(err);
+            setDeleteTarget(null);
+            setError(message);
+            setNotice({ title: "Could not delete department", message });
+          }
         }}
+      />
+      <NoticeModal
+        open={!!notice}
+        onOpenChange={(open) => !open && setNotice(null)}
+        title={notice?.title || "Notice"}
+        description={notice ? <p>{notice.message}</p> : null}
       />
     </div>
   );

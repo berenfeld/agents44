@@ -22,6 +22,7 @@ SYSTEM_TABLES = frozenset(
 )
 
 IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+SCHEMA_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,127}$")
 DEFAULT_ROW_LIMIT = 100
 MAX_ROW_LIMIT = 10000
 ALLOWED_FILTER_OPS = frozenset(
@@ -33,9 +34,10 @@ COMPARABLE_FILTER_OPS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte", "is_nul
 BOOLEAN_FILTER_OPS = frozenset({"eq", "ne", "is_null", "is_not_null"})
 
 
-def _validate_identifier(name: str, *, label: str) -> str:
+def _validate_identifier(name: str, *, label: str, allow_hyphen: bool = False) -> str:
     normalized = name.strip().lower()
-    if not IDENTIFIER_RE.match(normalized):
+    pattern = SCHEMA_NAME_RE if allow_hyphen else IDENTIFIER_RE
+    if not pattern.fullmatch(normalized):
         raise APIClientError(f"Invalid {label}", 400)
     return normalized
 
@@ -44,7 +46,7 @@ def _parse_qualified_table(table_name: str) -> tuple[str, str]:
     raw = table_name.strip()
     if "." in raw:
         schema_part, table_part = raw.split(".", 1)
-        schema = _validate_identifier(schema_part, label="schema name")
+        schema = _validate_identifier(schema_part, label="schema name", allow_hyphen=True)
         table = _validate_identifier(table_part, label="table name")
     else:
         schema = "public"

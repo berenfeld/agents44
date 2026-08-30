@@ -1,5 +1,6 @@
 """PostgreSQL schema and role provisioning for agents and departments."""
 
+import logging
 import re
 import secrets
 from typing import Any
@@ -7,7 +8,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+logger = logging.getLogger(__name__)
+
 IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Same rule as department folders: quoted PostgreSQL identifiers may include hyphens.
+DEPARTMENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,127}$")
 SYSTEM_SCHEMAS = frozenset({"public", "pg_catalog", "information_schema"})
 
 
@@ -20,9 +25,17 @@ def slugify_identifier(value: str) -> str:
 
 def department_schema_name(department: str) -> str:
     name = department.strip().lower()
-    if not IDENTIFIER_RE.match(name):
+    if not DEPARTMENT_NAME_RE.fullmatch(name) or name in SYSTEM_SCHEMAS:
         raise ValueError(f"Invalid department schema name: {department!r}")
     return name
+
+
+def _try_department_schema_name(department: str) -> str | None:
+    try:
+        return department_schema_name(department)
+    except ValueError:
+        logger.warning("Skipping invalid department schema name %r", department)
+        return None
 
 
 def agent_schema_name(agent_name: str) -> str:
@@ -303,11 +316,16 @@ def refresh_all_cross_grants(conn: Connection) -> None:
     agents = conn.execute(
         text("SELECT name, department, db_user FROM system_agents ORDER BY name")
     ).fetchall()
-    department_schemas = [department_schema_name(name) for name in departments]
+    department_schemas = [
+        schema for name in departments if (schema := _try_department_schema_name(name))
+    ]
     agent_schemas = [agent_schema_name(name) for name, _, _ in agents]
 
     for agent_name, department, db_user in agents:
         if not db_user:
+            continue
+        writable_department_schema = _try_department_schema_name(department)
+        if not writable_department_schema:
             continue
         grant_cross_schema_read(
             conn,
@@ -315,7 +333,7 @@ def refresh_all_cross_grants(conn: Connection) -> None:
             agent_role=db_user,
             department_schemas=department_schemas,
             agent_schemas=agent_schemas,
-            writable_department_schema=department_schema_name(department),
+            writable_department_schema=writable_department_schema,
             writable_agent_schema=agent_schema_name(agent_name),
         )
 

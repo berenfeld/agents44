@@ -1,17 +1,23 @@
 import logging
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import current_app
 
 from app.errors import APIClientError
+from app.extensions import db
+from app.services.db_provisioning import (
+    DEPARTMENT_NAME_RE,
+    SYSTEM_SCHEMAS,
+    create_department_schema,
+    department_schema_name,
+    refresh_all_cross_grants,
+)
 
 logger = logging.getLogger(__name__)
 
 COMMON_INPUT = "common_input"
 DEPARTMENT_INPUT = "input"
-DEPARTMENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,127}$")
 
 
 def workspace_root() -> Path:
@@ -34,6 +40,13 @@ def validate_department_name(name: str) -> str:
             "Department name must start with a letter and use only lowercase letters, numbers, underscores, or hyphens",
             400,
         )
+    if normalized in SYSTEM_SCHEMAS:
+        raise APIClientError(f"Department name '{normalized}' is reserved", 400)
+    try:
+        department_schema_name(normalized)
+    except ValueError as exc:
+        raise APIClientError(str(exc), 400) from exc
+    safe_path(normalized)
     return normalized
 
 
@@ -49,10 +62,20 @@ def ensure_workspace_layout() -> None:
     root = workspace_root()
     root.mkdir(parents=True, exist_ok=True)
     (root / COMMON_INPUT).mkdir(exist_ok=True)
-    for dept in SystemDepartment.query.order_by(SystemDepartment.name).all():
+    departments = SystemDepartment.query.order_by(SystemDepartment.name).all()
+    for dept in departments:
         ensure_department_folder(dept.name)
     for agent in SystemAgent.query.order_by(SystemAgent.name).all():
         ensure_agent_folder(agent.name)
+
+    conn = db.session.connection()
+    for dept in departments:
+        try:
+            create_department_schema(conn, dept.name)
+        except ValueError as exc:
+            logger.warning("Could not provision schema for department %s: %s", dept.name, exc)
+    refresh_all_cross_grants(conn)
+    db.session.commit()
 
 
 RUN_PROMPT_FILE = "prompt.txt"

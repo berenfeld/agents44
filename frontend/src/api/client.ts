@@ -8,6 +8,34 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+export function apiErrorMessage(err: unknown): string | null {
+  if (typeof err !== "object" || err === null || !("response" in err)) {
+    return null;
+  }
+  const payload = (err as { response?: { data?: { error?: unknown } } }).response?.data?.error;
+  if (typeof payload === "string" && payload.trim()) {
+    return payload;
+  }
+  if (payload && typeof payload === "object") {
+    const parts = Object.values(payload as Record<string, unknown>).flat();
+    const text = parts.filter((value): value is string => typeof value === "string").join(", ");
+    return text || null;
+  }
+  return null;
+}
+
+export const UNEXPECTED_SERVER_ERROR = "Unexpected server error";
+
+export function userFacingApiError(err: unknown): string {
+  if (typeof err === "object" && err !== null && "response" in err) {
+    const status = (err as { response?: { status?: number } }).response?.status;
+    if (typeof status === "number" && status >= 500) {
+      return UNEXPECTED_SERVER_ERROR;
+    }
+  }
+  return apiErrorMessage(err) || UNEXPECTED_SERVER_ERROR;
+}
+
 export type Department = {
   id: number;
   name: string;
