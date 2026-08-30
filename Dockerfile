@@ -2,8 +2,15 @@
 # Single-image Agents44 stack on Ubuntu 24.04 (same as local/dev).
 # Users: root (frontend/npm + Python venv/gunicorn/nginx), psql (PostgreSQL).
 #
-# APP_VERSION is declared once here (default), then re-declared in each stage
-# that uses it — Docker does not carry ARG across FROM boundaries.
+# Layer order (stable → volatile) so code commits only rebuild late layers:
+#   1) OS / Node / Python tooling
+#   2) dependency manifests (package-lock, requirements.txt)
+#   3) installed deps (npm ci, pip)
+#   4) app source / frontend build / runtime COPY of code
+#   5) APP_VERSION (changes every CI commit) — must stay last
+#
+# APP_VERSION is declared globally, then re-declared only in stages that need it.
+# Docker does not carry ARG across FROM boundaries.
 
 ARG APP_VERSION=dev
 
@@ -36,10 +43,11 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
 FROM frontend-deps AS frontend-build
+# Copy source before APP_VERSION so version bumps do not invalidate the COPY cache.
+COPY frontend/ ./
 ARG APP_VERSION
 ENV REACT_APP_API_URL=/api \
     REACT_APP_VERSION=${APP_VERSION}
-COPY frontend/ ./
 RUN npm run validate \
     && npm run build
 
@@ -60,12 +68,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # --- runtime: nginx + gunicorn + postgres in one image ---
 FROM base AS runtime
-ARG APP_VERSION
-ENV APP_VERSION=${APP_VERSION} \
-    REACT_APP_VERSION=${APP_VERSION} \
-    PGDATA=/var/lib/psql/data \
+ENV PGDATA=/var/lib/psql/data \
     PATH=/root/.local/bin:/opt/agents44/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+# Heavy OS packages + Claude CLI — must not depend on APP_VERSION
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
@@ -88,8 +94,11 @@ RUN apt-get update \
     && curl -fsSL https://claude.ai/install.sh | bash \
     && command -v claude
 
+# Dependency artifacts (change only when lockfiles / requirements change)
 COPY --from=python-deps /opt/agents44/venv /opt/agents44/venv
 COPY --from=frontend-build /opt/agents44/frontend/dist /opt/agents44/frontend/dist
+
+# App code + container config (change on most commits — keep late)
 COPY backend/app /opt/agents44/backend/app
 COPY backend/alembic /opt/agents44/backend/alembic
 COPY backend/alembic.ini /opt/agents44/backend/alembic.ini
@@ -101,6 +110,11 @@ COPY docker/nginx.conf /etc/nginx/nginx.conf
 
 RUN chmod +x /opt/agents44/docker/entrypoint.sh \
     && mkdir -p /opt/agents44/workspace/common_input /opt/agents44/runtime /opt/agents44/logs
+
+# Version last: CI changes this every push; only these tiny layers rebuild.
+ARG APP_VERSION
+ENV APP_VERSION=${APP_VERSION} \
+    REACT_APP_VERSION=${APP_VERSION}
 
 WORKDIR /opt/agents44
 EXPOSE 80
