@@ -50,6 +50,7 @@ export function ConfirmModal({
   confirmLabel,
   onConfirm,
   destructive,
+  busy,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -58,16 +59,25 @@ export function ConfirmModal({
   confirmLabel: string;
   onConfirm: () => void | Promise<void>;
   destructive?: boolean;
+  busy?: boolean;
 }) {
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title={title}>
+    <Modal
+      open={open}
+      onOpenChange={(next) => {
+        if (busy && !next) return;
+        onOpenChange(next);
+      }}
+      title={title}
+    >
       <div className="space-y-4 text-sm text-slate-600">{description}</div>
       <div className="mt-6 flex justify-end gap-2">
-        <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
           Cancel
         </Button>
         <Button
           variant={destructive ? "destructive" : "default"}
+          disabled={busy}
           onClick={() => {
             void Promise.resolve(onConfirm());
           }}

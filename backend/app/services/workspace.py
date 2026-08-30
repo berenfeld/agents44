@@ -1,3 +1,4 @@
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -162,12 +163,22 @@ def rename_file(old_path: str, new_path: str) -> dict:
     return {"path": str(dst.relative_to(workspace_root())), "is_dir": False}
 
 
-def delete_file(path: str) -> dict:
-    target = safe_path(path)
-    if not target.exists() or target.is_dir():
-        raise APIClientError("Path must be an existing file", 400)
+def delete_path(path: str) -> dict:
+    rel_in = path.strip().lstrip("/")
+    if not rel_in:
+        raise APIClientError("Cannot delete the workspace root", 400)
+    target = safe_path(rel_in)
+    root = workspace_root()
+    if target == root:
+        raise APIClientError("Cannot delete the workspace root", 400)
+    if not target.exists():
+        raise APIClientError("Path does not exist", 400)
+    rel = str(target.relative_to(root))
+    if target.is_dir():
+        shutil.rmtree(target)
+        return {"deleted": rel, "is_dir": True}
     target.unlink()
-    return {"deleted": path}
+    return {"deleted": rel, "is_dir": False}
 
 
 def _read_folder_files(relative_dir: str, max_chars: int, used: int) -> tuple[list[str], int]:

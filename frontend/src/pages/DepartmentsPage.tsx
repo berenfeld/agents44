@@ -33,10 +33,8 @@ export default function DepartmentsPage() {
   );
   const { sorted, sortKey, sortDir, toggleSort } = useTableSort(departments, sortAccessors, "name");
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) {
-      setLoading(true);
-    }
+  const load = useCallback(async () => {
+    setLoading(true);
     const [deptRes, agentRes] = await Promise.all([
       api.get<Department[]>("/departments"),
       api.get<Agent[]>("/agents"),
@@ -68,15 +66,14 @@ export default function DepartmentsPage() {
           setError(null);
           setCreating(true);
           try {
-            await api.post("/departments", { name });
+            const created = await api.post<Department>("/departments", { name });
             setName("");
-            setNotice({ title: "Department created", message: `Created ${name.trim().toLowerCase()}.` });
-            await load();
+            setDepartments((rows) => [...rows, created.data]);
+            setNotice({ title: "Department created", message: `Created ${created.data.name}.` });
           } catch (err) {
             const message = userFacingApiError(err);
             setError(message);
             setNotice({ title: "Could not create department", message });
-            await load({ silent: true }).catch(() => undefined);
           } finally {
             setCreating(false);
           }
@@ -179,10 +176,12 @@ export default function DepartmentsPage() {
         }
         onConfirm={async () => {
           if (!deleteTarget) return;
+          const target = deleteTarget;
           try {
-            await api.delete(`/departments/${deleteTarget.id}`);
+            await api.delete(`/departments/${target.id}`);
             setDeleteTarget(null);
-            await load();
+            setDepartments((rows) => rows.filter((row) => row.id !== target.id));
+            setNotice({ title: "Department deleted", message: `Deleted ${target.name}.` });
           } catch (err) {
             const message = userFacingApiError(err);
             setDeleteTarget(null);

@@ -7,9 +7,9 @@ import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api } from "@/api/client";
+import { api, userFacingApiError } from "@/api/client";
 import { Button, Input } from "@/components/ui/primitives";
-import { ConfirmModal } from "@/components/ui/modal";
+import { ConfirmModal, Modal, NoticeModal } from "@/components/ui/modal";
 import { PanelCard, SplitPanelLayout } from "@/components/ui/split-panel-layout";
 import { cn } from "@/lib/utils";
 
@@ -68,16 +68,24 @@ function parentFolder(path: string): string {
   return path.split("/").slice(0, -1).join("/");
 }
 
+function isUnderPath(path: string, ancestor: string): boolean {
+  return path === ancestor || path.startsWith(`${ancestor}/`);
+}
+
 function fileName(path: string): string {
   return path.split("/").pop() || path;
 }
 
 function extension(path: string) {
-  return path.split(".").pop()?.toLowerCase() || "";
+  const name = fileName(path);
+  const lastDot = name.lastIndexOf(".");
+  if (lastDot <= 0) return "";
+  return name.slice(lastDot + 1).toLowerCase();
 }
 
 function isEditable(path: string) {
   const ext = extension(path);
+  if (!ext) return true;
   return ["txt", "json", "md", "markdown", "log"].includes(ext);
 }
 
@@ -110,6 +118,22 @@ function PanelLeftCloseIcon() {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <path d="M9 3v18" strokeLinecap="round" />
       <path d="m14 9-3 3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -159,7 +183,6 @@ export default function AgentFilesPage() {
 
   const [currentFolder, setCurrentFolder] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState("");
@@ -170,8 +193,12 @@ export default function AgentFilesPage() {
   const [content, setContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [newFileName, setNewFileName] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<FileEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [fileToRename, setFileToRename] = useState<FileEntry | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [viewMode, setViewMode] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
@@ -200,9 +227,9 @@ export default function AgentFilesPage() {
     return res.data.children || [];
   }, []);
 
-  const setEntriesWithDrafts = useCallback((nextEntries: FileEntry[]) => {
-    setEntries(nextEntries);
-    setDraftNames(Object.fromEntries(nextEntries.map((entry) => [entry.path, entry.name])));
+  const openRename = useCallback((entry: FileEntry) => {
+    setFileToRename(entry);
+    setRenameDraft(entry.name);
   }, []);
 
   const syncFromUrl = useCallback(async () => {
@@ -217,7 +244,7 @@ export default function AgentFilesPage() {
         setDirty(false);
         setSaveStatus("idle");
         setViewMode(true);
-        setEntriesWithDrafts(await fetchFolder(""));
+        setEntries(await fetchFolder(""));
         return;
       }
 
@@ -230,7 +257,7 @@ export default function AgentFilesPage() {
         setDirty(false);
         setSaveStatus("idle");
         setViewMode(true);
-        setEntriesWithDrafts(res.data.children || []);
+        setEntries(res.data.children || []);
         return;
       }
 
@@ -245,15 +272,14 @@ export default function AgentFilesPage() {
       setDirty(false);
       setSaveStatus("idle");
       setViewMode(!urlEditMode);
-      setEntriesWithDrafts(await fetchFolder(folder));
+      setEntries(await fetchFolder(folder));
     } catch {
       setLoadError("Could not load workspace. Run ./start-dev.sh to create ./.workspace");
       setEntries([]);
-      setDraftNames({});
     } finally {
       setLoading(false);
     }
-  }, [urlPath, urlEditMode, fetchFolder, setEntriesWithDrafts]);
+  }, [urlPath, urlEditMode, fetchFolder]);
 
   useEffect(() => {
     syncFromUrl().catch(console.error);
@@ -289,8 +315,8 @@ export default function AgentFilesPage() {
   }, [selectedPath]);
 
   const reloadFolder = useCallback(async () => {
-    setEntriesWithDrafts(await fetchFolder(currentFolder));
-  }, [currentFolder, fetchFolder, setEntriesWithDrafts]);
+    setEntries(await fetchFolder(currentFolder));
+  }, [currentFolder, fetchFolder]);
 
   const saveFile = useCallback(async () => {
     if (!selectedPath || !dirty || !isEditable(selectedPath) || saveStatus === "saving") return;
@@ -327,21 +353,69 @@ export default function AgentFilesPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [viewMode, selectedPath, dirty, saveStatus, saveFile]);
 
-  const commitEntryRename = async (entry: FileEntry) => {
-    const trimmed = (draftNames[entry.path] ?? entry.name).trim();
-    setRenamingPath(null);
-    if (!trimmed || trimmed === entry.name) {
-      setDraftNames((prev) => ({ ...prev, [entry.path]: entry.name }));
+  const renameFile = async () => {
+    if (!fileToRename || renaming) return;
+    const trimmed = renameDraft.trim();
+    if (!trimmed || trimmed === fileToRename.name) {
+      setFileToRename(null);
+      setRenameDraft("");
       return;
     }
-    const folder = parentFolder(entry.path);
+    if (trimmed.includes("/") || trimmed.includes("\\")) {
+      setNotice({ title: "Could not rename file", message: "Name cannot contain slashes." });
+      return;
+    }
+    const folder = parentFolder(fileToRename.path);
     const newPath = folder ? `${folder}/${trimmed}` : trimmed;
-    await api.put("/files", { old_path: entry.path, new_path: newPath });
-    if (selectedPath === entry.path) {
-      navigateWithQuery(newPath, { edit: !viewMode });
-      return;
+    setRenaming(true);
+    try {
+      await api.put("/files", { old_path: fileToRename.path, new_path: newPath });
+      const wasSelected = selectedPath === fileToRename.path;
+      setFileToRename(null);
+      setRenameDraft("");
+      setNotice({ title: "File renamed", message: `Renamed to ${trimmed}.` });
+      if (wasSelected) {
+        navigateWithQuery(newPath, { edit: !viewMode });
+        return;
+      }
+      await reloadFolder();
+    } catch (err) {
+      setNotice({ title: "Could not rename file", message: userFacingApiError(err) });
+    } finally {
+      setRenaming(false);
     }
-    await reloadFolder();
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await api.delete("/files", { data: { path: deleteTarget.path } });
+      const target = deleteTarget;
+      setDeleteTarget(null);
+      setNotice({
+        title: target.is_dir ? "Folder deleted" : "File deleted",
+        message: `Deleted ${target.name}.`,
+      });
+      if (
+        isUnderPath(urlPath, target.path) ||
+        isUnderPath(selectedPath, target.path) ||
+        isUnderPath(currentFolder, target.path)
+      ) {
+        navigateWithQuery(parentFolder(target.path));
+        return;
+      }
+      setEntries((rows) => rows.filter((row) => row.path !== target.path));
+    } catch (err) {
+      const isDir = deleteTarget.is_dir;
+      setDeleteTarget(null);
+      setNotice({
+        title: isDir ? "Could not delete folder" : "Could not delete file",
+        message: userFacingApiError(err),
+      });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const createNewFile = async () => {
@@ -462,45 +536,46 @@ export default function AgentFilesPage() {
                 <span className="w-4 shrink-0 text-xs">{entry.is_dir ? "📁" : "📄"}</span>
 
                 {entry.is_dir ? (
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left"
-                    onClick={() => enterFolder(entry.path)}
-                  >
-                    {entry.name}/
-                  </button>
-                ) : renamingPath === entry.path ? (
-                  <Input
-                    className="h-7 min-w-0 flex-1 px-1 text-sm"
-                    value={draftNames[entry.path] ?? entry.name}
-                    autoFocus
-                    onChange={(e) => {
-                      setDraftNames((prev) => ({ ...prev, [entry.path]: e.target.value }));
-                    }}
-                    onBlur={() => commitEntryRename(entry).catch(console.error)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.currentTarget.blur();
-                      }
-                      if (e.key === "Escape") {
-                        setRenamingPath(null);
-                        setDraftNames((prev) => ({ ...prev, [entry.path]: entry.name }));
-                      }
-                    }}
-                  />
+                  <>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left"
+                      onClick={() => enterFolder(entry.path)}
+                    >
+                      {entry.name}/
+                    </button>
+                    <button
+                      type="button"
+                      title={`Delete ${entry.name}`}
+                      aria-label={`Delete ${entry.name}`}
+                      disabled={deleting}
+                      onClick={() => setDeleteTarget(entry)}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </>
                 ) : (
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left hover:text-slate-900"
-                    title="View file (double-click to rename)"
-                    onClick={() => openFile(entry.path, "view")}
-                    onDoubleClick={(e) => {
-                      e.preventDefault();
-                      setRenamingPath(entry.path);
-                    }}
-                  >
-                    {entry.name}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left hover:text-slate-900"
+                      title="View file"
+                      onClick={() => openFile(entry.path, "view")}
+                    >
+                      {entry.name}
+                    </button>
+                    <button
+                      type="button"
+                      title={`Rename ${entry.name}`}
+                      aria-label={`Rename ${entry.name}`}
+                      disabled={renaming}
+                      onClick={() => openRename(entry)}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </>
                 )}
 
                 {!entry.is_dir ? (
@@ -590,16 +665,69 @@ export default function AgentFilesPage() {
                     </Button>
                   ) : null}
                   <Button
+                    variant="outline"
+                    className="h-8 px-2.5 text-xs"
+                    disabled={renaming}
+                    onClick={() => {
+                      const entry =
+                        entries.find((item) => item.path === selectedPath) ?? {
+                          path: selectedPath,
+                          name: fileName(selectedPath),
+                          is_dir: false,
+                          size_bytes: selectedMeta.size_bytes,
+                          modified_at: selectedMeta.modified_at,
+                        };
+                      openRename(entry);
+                    }}
+                  >
+                    Rename
+                  </Button>
+                  <Button
                     variant="destructive"
                     className="h-8 px-2.5 text-xs"
-                    onClick={() => setDeleteTarget(selectedPath)}
+                    disabled={deleting}
+                    onClick={() => {
+                      const entry =
+                        entries.find((item) => item.path === selectedPath) ?? {
+                          path: selectedPath,
+                          name: fileName(selectedPath),
+                          is_dir: false,
+                          size_bytes: selectedMeta.size_bytes,
+                          modified_at: selectedMeta.modified_at,
+                        };
+                      setDeleteTarget(entry);
+                    }}
                   >
                     Delete
                   </Button>
                 </div>
               </>
             ) : (
-              <span className="text-sm text-slate-500">Select a file to view or edit</span>
+              <>
+                <span className="min-w-0 truncate text-sm text-slate-500">
+                  {currentFolder ? fileName(currentFolder) : "Select a file to view or edit"}
+                </span>
+                {currentFolder ? (
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                    <Button
+                      variant="destructive"
+                      className="h-8 px-2.5 text-xs"
+                      disabled={deleting}
+                      onClick={() =>
+                        setDeleteTarget({
+                          path: currentFolder,
+                          name: fileName(currentFolder),
+                          is_dir: true,
+                          size_bytes: null,
+                          modified_at: null,
+                        })
+                      }
+                    >
+                      Delete folder
+                    </Button>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
 
@@ -609,25 +737,84 @@ export default function AgentFilesPage() {
 
       <ConfirmModal
         open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Delete file?"
-        confirmLabel="Delete"
+        onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}
+        title={deleteTarget?.is_dir ? "Delete folder?" : "Delete file?"}
+        confirmLabel={deleting ? "Deleting..." : "Delete"}
         destructive
+        busy={deleting}
         description={
-          <p>
-            Delete file <strong>{deleteTarget ? fileName(deleteTarget) : ""}</strong>?
-          </p>
+          deleteTarget ? (
+            deleteTarget.is_dir ? (
+              <p>
+                Delete folder <strong>{deleteTarget.name}</strong> and everything inside it? This cannot be undone.
+              </p>
+            ) : (
+              <p>
+                Delete file <strong>{deleteTarget.name}</strong>?
+              </p>
+            )
+          ) : null
         }
-        onConfirm={async () => {
-          if (!deleteTarget) return;
-          await api.delete("/files", { data: { path: deleteTarget } });
-          setDeleteTarget(null);
-          if (selectedPath === deleteTarget) {
-            navigateWithQuery(currentFolder);
-            return;
-          }
-          await reloadFolder();
+        onConfirm={() => {
+          void confirmDelete();
         }}
+      />
+      <Modal
+        open={!!fileToRename}
+        onOpenChange={(open) => {
+          if (!open && !renaming) {
+            setFileToRename(null);
+            setRenameDraft("");
+          }
+        }}
+        title="Rename file"
+      >
+        {fileToRename ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Rename <strong>{fileToRename.name}</strong> to a new file name in the same folder.
+            </p>
+            <div>
+              <label htmlFor="rename-file-input" className="mb-1 block text-sm font-medium text-slate-700">
+                New name
+              </label>
+              <Input
+                id="rename-file-input"
+                value={renameDraft}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                placeholder="file.md"
+                autoFocus
+                disabled={renaming}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && renameDraft.trim() && !renaming) {
+                    renameFile().catch(console.error);
+                  }
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                disabled={renaming}
+                onClick={() => {
+                  setFileToRename(null);
+                  setRenameDraft("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button disabled={!renameDraft.trim() || renaming} onClick={() => renameFile().catch(console.error)}>
+                {renaming ? "Renaming..." : "Rename"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+      <NoticeModal
+        open={!!notice}
+        onOpenChange={(open) => !open && setNotice(null)}
+        title={notice?.title || "Notice"}
+        description={notice ? <p>{notice.message}</p> : null}
       />
     </div>
   );
