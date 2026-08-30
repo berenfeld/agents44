@@ -41,6 +41,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
           REPO: ${{ secrets.AGENTS44_ECR_REPOSITORY }}
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ -z "$REPO" ]; then
@@ -60,7 +61,10 @@ jobs:
           {
             echo "tags<<EOF"
             echo "${IMAGE}:${VERSION}"
-            echo "${IMAGE}:latest"
+            # latest = last successful build from main only
+            if [ "$BRANCH" = "main" ]; then
+              echo "${IMAGE}:latest"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
