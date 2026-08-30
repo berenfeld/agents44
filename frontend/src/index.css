@@ -9,10 +9,26 @@ body {
   background: #f8fafc;
 }
 
-/* Google Identity Services iframe ignores CSS width; clip and constrain the wrapper. */
+/* GSI iframe is cross-origin (often RTL for Hebrew Google accounts). Keep the
+   wrapper LTR/full-width so the button lines up with the login fields. */
+.google-login-button {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+}
+
 .google-login-button > div,
-.google-login-button > div > div,
+.google-login-button > div > div {
+  display: flex !important;
+  justify-content: flex-start !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+}
+
 .google-login-button iframe {
+  margin: 0 !important;
+  width: 100% !important;
   max-width: 100% !important;
 }
 

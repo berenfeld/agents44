@@ -9,12 +9,29 @@ logger = logging.getLogger("api")
 
 FIELD_MAX = 200
 MAX_LOG_BYTES = 8192
+SENSITIVE_KEY_MARKERS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "credential",
+    "authorization",
+    "api_key",
+    "apikey",
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in SENSITIVE_KEY_MARKERS)
 
 
 def truncate_json(obj, field_max: int = FIELD_MAX, max_bytes: int = MAX_LOG_BYTES):
-    def _truncate_value(value):
+    def _truncate_value(value, key: str | None = None):
+        if key and _is_sensitive_key(key):
+            return "[redacted]"
         if isinstance(value, dict):
-            return {k: _truncate_value(v) for k, v in value.items()}
+            return {k: _truncate_value(v, k) for k, v in value.items()}
         if isinstance(value, list):
             return [_truncate_value(v) for v in value]
         if isinstance(value, str) and len(value) > field_max:

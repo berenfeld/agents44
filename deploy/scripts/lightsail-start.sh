@@ -168,9 +168,8 @@ echo "  URL:       ${FRONTEND_URL}"
 echo "  Health:    ${FRONTEND_URL%/}/api/health"
 echo "  Env file:  ${ENV_FILE}  ($( [ "$ENV_REUSED" -eq 1 ] && echo reused || echo created ))"
 echo "  Dev login: ${DEV_LOGIN_EMAIL}"
-if [ "$ENV_REUSED" -eq 0 ]; then
-  echo "  Dev pass:  ${DEV_LOGIN_PASSWORD}  (also in .env)"
-fi
+echo "  Dev pass:  ${DEV_LOGIN_PASSWORD}"
+echo "             (from ${ENV_FILE}; frontend does not embed this password)"
 if [ -n "$GOOGLE_CLIENT_ID" ]; then
   echo "  Google:    enabled"
 else

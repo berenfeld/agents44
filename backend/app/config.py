@@ -48,6 +48,9 @@ class Config:
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "")
     FLASK_ENV = os.getenv("FLASK_ENV", "")
     DEBUG = os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_SECURE = os.getenv("FRONTEND_URL", "").strip().lower().startswith("https://")
     SUPPORTED_MODELS: list[str] = []
     DEFAULT_MODEL_RESOLVED: str = ""
     RUNTIME_DIR = _resolve_project_path(os.getenv("RUNTIME_DIR"), PROJECT_ROOT / ".dev" / "runtime")

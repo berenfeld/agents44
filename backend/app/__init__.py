@@ -6,6 +6,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app.api.agent_db import agent_db_bp
 from app.api.agents import agents_bp
@@ -58,6 +59,8 @@ def _configure_logging(log_dir: str) -> None:
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
+    # Host TLS nginx + in-container nginx; two X-Forwarded-For hops, one proto/host.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=1, x_host=1)
 
     _configure_logging(app.config["LOG_DIR"])
 

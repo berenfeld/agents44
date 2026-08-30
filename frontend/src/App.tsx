@@ -95,7 +95,8 @@ export default function App() {
     return (
       <LoginPage
         onLogin={async () => {
-          await refreshAuth();
+          const res = await api.get<{ authenticated: boolean; email: string }>("/auth/me");
+          setEmail(res.data.email);
           navigate("/agents");
         }}
       />
