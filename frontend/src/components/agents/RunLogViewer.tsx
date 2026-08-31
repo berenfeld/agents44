@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatRunLog } from "@/lib/format-run-log";
 import { highlightSearch } from "@/lib/search-highlight";
 
@@ -53,18 +53,20 @@ export function RunLogViewer({
   live?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const markupTimesRef = useRef<string[]>([]);
+  const [markupTimes, setMarkupTimes] = useState<string[]>([]);
   const displayContent = useMemo(() => (format ? formatRunLog(content) : content), [content, format]);
   const markupCount = format ? countMarkupLines(displayContent) : 0;
 
-  if (format && live) {
-    const times = markupTimesRef.current;
+  let times = markupTimes;
+  if (format && live && markupCount > markupTimes.length) {
+    times = markupTimes.slice();
     while (times.length < markupCount) {
       times.push(formatLogClock(new Date()));
     }
+    setMarkupTimes(times);
   }
 
-  const stampedContent = format ? stampMarkupLines(displayContent, markupTimesRef.current) : displayContent;
+  const stampedContent = format ? stampMarkupLines(displayContent, times) : displayContent;
   const highlighted = useMemo(() => {
     const base = highlightSearch(stampedContent, search);
     return format ? decorateFormattedLogHtml(base) : base;
