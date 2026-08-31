@@ -646,7 +646,13 @@ export default function AgentsRunsPage() {
         }
       >
         {modalKind === "log" ? (
-          <RunLogViewer content={modalContent} search={modalSearch} autoScroll={modalLogLive && logAutoScroll} />
+          <RunLogViewer
+            key={modalRunId ?? "log"}
+            content={modalContent}
+            search={modalSearch}
+            autoScroll={modalLogLive && logAutoScroll}
+            live={modalLogLive}
+          />
         ) : modalKind === "prompt" ? (
           <RunLogViewer content={modalContent} search={modalSearch} format={false} />
         ) : modalKind === "summary" ? (

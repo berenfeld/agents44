@@ -2,12 +2,36 @@ import { useEffect, useMemo, useRef } from "react";
 import { formatRunLog } from "@/lib/format-run-log";
 import { highlightSearch } from "@/lib/search-highlight";
 
+function markupLineRe(): RegExp {
+  return /^(--- .+ ---)$/gm;
+}
+
+function formatLogClock(date: Date): string {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":");
+}
+
+function countMarkupLines(text: string): number {
+  return text.match(markupLineRe())?.length ?? 0;
+}
+
+function stampMarkupLines(text: string, times: string[]): string {
+  let index = 0;
+  return text.replace(markupLineRe(), (header) => {
+    const time = times[index++];
+    return time ? `${header}  ${time}` : header;
+  });
+}
+
 function decorateFormattedLogHtml(html: string): string {
   return html
-    .replace(
-      /^(--- .+ ---)$/gm,
-      '<span class="block mt-3 font-sans text-xs font-semibold uppercase tracking-wide text-violet-700 first:mt-0">$1</span>',
-    )
+    .replace(/^(--- .+? ---)(.*)$/gm, (_, header: string, suffix: string) => {
+      const timeHtml = suffix.trim()
+        ? `<span class="ml-2 font-mono font-normal normal-case tracking-normal text-slate-500">${suffix.trim()}</span>`
+        : "";
+      return `<span class="block mt-3 font-sans text-xs font-semibold uppercase tracking-wide text-violet-700 first:mt-0">${header}${timeHtml}</span>`;
+    })
     .replace(
       /^(\[(?:Session|Status)\].+)$/gm,
       '<span class="block font-sans text-xs text-slate-500">$1</span>',
@@ -20,18 +44,31 @@ export function RunLogViewer({
   search = "",
   autoScroll = false,
   format = true,
+  live = false,
 }: {
   content: string;
   search?: string;
   autoScroll?: boolean;
   format?: boolean;
+  live?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const markupTimesRef = useRef<string[]>([]);
   const displayContent = useMemo(() => (format ? formatRunLog(content) : content), [content, format]);
+  const markupCount = format ? countMarkupLines(displayContent) : 0;
+
+  if (format && live) {
+    const times = markupTimesRef.current;
+    while (times.length < markupCount) {
+      times.push(formatLogClock(new Date()));
+    }
+  }
+
+  const stampedContent = format ? stampMarkupLines(displayContent, markupTimesRef.current) : displayContent;
   const highlighted = useMemo(() => {
-    const base = highlightSearch(displayContent, search);
+    const base = highlightSearch(stampedContent, search);
     return format ? decorateFormattedLogHtml(base) : base;
-  }, [displayContent, search, format]);
+  }, [stampedContent, search, format]);
 
   useEffect(() => {
     if (!autoScroll) {
