@@ -3,7 +3,15 @@ from flask import Blueprint, jsonify, request, send_file
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.models import SystemAgent, SystemDepartment
-from app.services.workspace import COMMON_INPUT, delete_path, list_path, rename_file, workspace_file_path, write_file
+from app.services.workspace import (
+    COMMON_INPUT,
+    delete_path,
+    list_path,
+    protected_path_error,
+    rename_file,
+    workspace_file_path,
+    write_file,
+)
 
 files_bp = Blueprint("files", __name__)
 
@@ -51,6 +59,9 @@ def create_file():
 def update_file():
     payload = request.get_json(force=True) or {}
     if payload.get("old_path") and payload.get("new_path"):
+        blocked = protected_path_error(str(payload["old_path"]), action="rename")
+        if blocked:
+            raise APIClientError(blocked, 400)
         return jsonify(rename_file(payload["old_path"], payload["new_path"]))
     path = payload.get("path")
     if not path:
@@ -69,6 +80,9 @@ def remove_path():
     parts = [part for part in str(path).strip().lstrip("/").split("/") if part]
     if not parts:
         raise APIClientError("Cannot delete the workspace root", 400)
+    blocked = protected_path_error("/".join(parts), action="delete")
+    if blocked:
+        raise APIClientError(blocked, 400)
     if len(parts) == 1:
         name = parts[0]
         if name == COMMON_INPUT:

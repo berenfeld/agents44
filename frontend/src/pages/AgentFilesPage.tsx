@@ -63,6 +63,13 @@ function filesQueryString(
   return qs ? `?${qs}` : "";
 }
 
+function isProtectedWorkspacePath(path: string): boolean {
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length === 2 && parts[1] === "input") return true;
+  if (parts.length === 3 && parts[1] === "input" && parts[2] === "MEMORY.md") return true;
+  return false;
+}
+
 function parentFolder(path: string): string {
   if (!path.includes("/")) return "";
   return path.split("/").slice(0, -1).join("/");
@@ -603,7 +610,7 @@ export default function AgentFilesPage() {
                   <span className="shrink-0 text-xs text-slate-400">{formatFileSize(entry.size_bytes)}</span>
                 ) : null}
 
-                {!entry.is_dir ? (
+                {!entry.is_dir && !isProtectedWorkspacePath(entry.path) ? (
                   <button
                     type="button"
                     title={`Rename ${entry.name}`}
@@ -616,16 +623,18 @@ export default function AgentFilesPage() {
                   </button>
                 ) : null}
 
-                <button
-                  type="button"
-                  title={`Delete ${entry.name}`}
-                  aria-label={`Delete ${entry.name}`}
-                  disabled={deleting}
-                  onClick={() => setDeleteTarget(entry)}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-                >
-                  <TrashIcon className="h-3.5 w-3.5" />
-                </button>
+                {!isProtectedWorkspacePath(entry.path) ? (
+                  <button
+                    type="button"
+                    title={`Delete ${entry.name}`}
+                    aria-label={`Delete ${entry.name}`}
+                    disabled={deleting}
+                    onClick={() => setDeleteTarget(entry)}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
             </li>
           ))}
@@ -729,42 +738,46 @@ export default function AgentFilesPage() {
                       {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
                     </Button>
                   ) : null}
-                  <Button
-                    variant="outline"
-                    className="h-8 px-2.5 text-xs"
-                    disabled={renaming}
-                    onClick={() => {
-                      const entry =
-                        entries.find((item) => item.path === selectedPath) ?? {
-                          path: selectedPath,
-                          name: fileName(selectedPath),
-                          is_dir: false,
-                          size_bytes: selectedMeta.size_bytes,
-                          modified_at: selectedMeta.modified_at,
-                        };
-                      openRename(entry);
-                    }}
-                  >
-                    Rename
-                  </Button>
-                  <ToolbarIconButton
-                    title="Delete file"
-                    variant="destructive"
-                    disabled={deleting}
-                    onClick={() => {
-                      const entry =
-                        entries.find((item) => item.path === selectedPath) ?? {
-                          path: selectedPath,
-                          name: fileName(selectedPath),
-                          is_dir: false,
-                          size_bytes: selectedMeta.size_bytes,
-                          modified_at: selectedMeta.modified_at,
-                        };
-                      setDeleteTarget(entry);
-                    }}
-                  >
-                    <TrashIcon />
-                  </ToolbarIconButton>
+                  {!isProtectedWorkspacePath(selectedPath) ? (
+                    <Button
+                      variant="outline"
+                      className="h-8 px-2.5 text-xs"
+                      disabled={renaming}
+                      onClick={() => {
+                        const entry =
+                          entries.find((item) => item.path === selectedPath) ?? {
+                            path: selectedPath,
+                            name: fileName(selectedPath),
+                            is_dir: false,
+                            size_bytes: selectedMeta.size_bytes,
+                            modified_at: selectedMeta.modified_at,
+                          };
+                        openRename(entry);
+                      }}
+                    >
+                      Rename
+                    </Button>
+                  ) : null}
+                  {!isProtectedWorkspacePath(selectedPath) ? (
+                    <ToolbarIconButton
+                      title="Delete file"
+                      variant="destructive"
+                      disabled={deleting}
+                      onClick={() => {
+                        const entry =
+                          entries.find((item) => item.path === selectedPath) ?? {
+                            path: selectedPath,
+                            name: fileName(selectedPath),
+                            is_dir: false,
+                            size_bytes: selectedMeta.size_bytes,
+                            modified_at: selectedMeta.modified_at,
+                          };
+                        setDeleteTarget(entry);
+                      }}
+                    >
+                      <TrashIcon />
+                    </ToolbarIconButton>
+                  ) : null}
                 </div>
               </>
             ) : (
@@ -772,7 +785,7 @@ export default function AgentFilesPage() {
                 <span className="min-w-0 truncate text-sm text-slate-500">
                   {currentFolder ? fileName(currentFolder) : "Select a file to view or edit"}
                 </span>
-                {currentFolder ? (
+                {currentFolder && !isProtectedWorkspacePath(currentFolder) ? (
                   <div className="ml-auto flex shrink-0 items-center gap-1.5">
                     <ToolbarIconButton
                       title="Delete folder"

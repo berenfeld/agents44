@@ -15,6 +15,7 @@ from app.services.db_provisioning import (
 
 COMMON_INPUT = "common_input"
 DEPARTMENT_INPUT = "input"
+AGENT_MEMORY_FILE = "MEMORY.md"
 
 
 def workspace_root() -> Path:
@@ -94,11 +95,28 @@ def ensure_run_folder(agent_name: str, started_at: datetime, run_id: int) -> dic
     }
 
 
+def agent_memory_rel(agent_name: str) -> str:
+    return f"{agent_name}/{DEPARTMENT_INPUT}/{AGENT_MEMORY_FILE}"
+
+
 def ensure_agent_folder(agent_name: str) -> None:
     agent_dir = safe_path(agent_name)
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / DEPARTMENT_INPUT).mkdir(exist_ok=True)
     (agent_dir / ".runs").mkdir(exist_ok=True)
+    memory = agent_dir / DEPARTMENT_INPUT / AGENT_MEMORY_FILE
+    if not memory.exists():
+        memory.write_text("", encoding="utf-8")
+
+
+def protected_path_error(path: str, *, action: str = "delete") -> str | None:
+    rel = path.strip().lstrip("/").rstrip("/")
+    parts = [part for part in rel.split("/") if part]
+    if len(parts) == 2 and parts[1] == DEPARTMENT_INPUT:
+        return f"Cannot {action} the input folder"
+    if len(parts) == 3 and parts[1] == DEPARTMENT_INPUT and parts[2] == AGENT_MEMORY_FILE:
+        return f"Cannot {action} MEMORY.md"
+    return None
 
 
 def _file_stat_fields(path: Path) -> dict:
@@ -166,6 +184,9 @@ def write_file(path: str, content: str) -> dict:
 
 
 def rename_file(old_path: str, new_path: str) -> dict:
+    blocked = protected_path_error(old_path, action="rename")
+    if blocked:
+        raise APIClientError(blocked, 400)
     src = safe_path(old_path)
     dst = safe_path(new_path)
     if not src.exists() or src.is_dir():
@@ -184,6 +205,9 @@ def delete_path(path: str) -> dict:
     rel_in = path.strip().lstrip("/")
     if not rel_in:
         raise APIClientError("Cannot delete the workspace root", 400)
+    blocked = protected_path_error(rel_in, action="delete")
+    if blocked:
+        raise APIClientError(blocked, 400)
     target = safe_path(rel_in)
     root = workspace_root()
     if target == root:
@@ -198,15 +222,23 @@ def delete_path(path: str) -> dict:
     return {"deleted": rel, "is_dir": False}
 
 
-def _read_folder_files(relative_dir: str, max_chars: int, used: int) -> tuple[list[str], int]:
+def _read_folder_files(
+    relative_dir: str,
+    max_chars: int,
+    used: int,
+    skip_rels: set[str] | None = None,
+) -> tuple[list[str], int]:
     parts: list[str] = []
     folder = safe_path(relative_dir)
     if not folder.exists():
         return parts, used
+    skip = skip_rels or set()
     for file_path in sorted(folder.rglob("*")):
         if not file_path.is_file():
             continue
         rel = file_path.relative_to(workspace_root())
+        if str(rel) in skip:
+            continue
         text = file_path.read_text(encoding="utf-8")
         chunk = f"### {rel}\n{text}\n"
         if used + len(chunk) > max_chars:
@@ -232,8 +264,41 @@ def read_prompt_inputs(department: str, agent_name: str, max_chars: int = 50000)
     if dept_parts:
         sections.append(f"# Department common input ({department})\n" + "\n".join(dept_parts))
 
-    agent_parts, _ = _read_folder_files(f"{agent_name}/{DEPARTMENT_INPUT}", max_chars, used)
+    agent_parts, _ = _read_folder_files(
+        f"{agent_name}/{DEPARTMENT_INPUT}",
+        max_chars,
+        used,
+        skip_rels={agent_memory_rel(agent_name)},
+    )
     if agent_parts:
         sections.append(f"# Agent input ({agent_name})\n" + "\n".join(agent_parts))
 
     return "\n\n".join(sections)
+
+
+def read_agent_memory(agent_name: str) -> str:
+    target = safe_path(agent_memory_rel(agent_name))
+    if not target.exists() or not target.is_file():
+        return ""
+    return target.read_text(encoding="utf-8")
+
+
+def build_memory_instructions(agent_name: str) -> str:
+    rel = agent_memory_rel(agent_name)
+    body = read_agent_memory(agent_name).strip()
+    content = body if body else "(empty)"
+    return "\n".join(
+        [
+            "# Agent memory",
+            "",
+            f"`{rel}` is automatically included in every prompt for this agent.",
+            "Use the `write_memory` tool to update it. Pass the full file contents; the previous file is replaced.",
+            "Store only very important standing knowledge you learn and will need on later runs:",
+            "identities, conventions, stable IDs, learned pitfalls, and durable decisions.",
+            "Do not store secrets, one-off run notes, or large dumps. Keep it short.",
+            "This file and the `input` folder cannot be deleted.",
+            "",
+            f"### {rel}",
+            content,
+        ]
+    )

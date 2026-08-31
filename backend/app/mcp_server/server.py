@@ -13,6 +13,7 @@ from app.mcp_server.tools import (
     tool_read_workspace,
     tool_send_email,
     tool_write_db,
+    tool_write_memory,
     tool_write_workspace,
 )
 
@@ -31,7 +32,7 @@ def _build_mcp_server(port: int) -> FastMCP:
 
     mcp = FastMCP(
         "agents44",
-        instructions="Agents44 platform tools for workspace files, PostgreSQL, and email.",
+        instructions="Agents44 platform tools for workspace files, agent memory, PostgreSQL, and email.",
         host="127.0.0.1",
         port=port,
         sse_path="/sse",
@@ -53,6 +54,20 @@ def _build_mcp_server(port: int) -> FastMCP:
     )
     def write_workspace(path: str, content: str, ctx: Context = ...) -> dict:
         return run_tool(ctx, tool_write_workspace, path, content)
+
+    @mcp.tool(
+        description=(
+            "Replace this agent's persistent memory file at input/MEMORY.md. "
+            "That file is automatically added to every prompt. "
+            "Write only very important facts you learn and will need on every later run "
+            "(identities, conventions, stable IDs, learned pitfalls, durable decisions). "
+            "Pass the full file contents; this overwrites previous memory. "
+            "Do not store secrets, one-off notes, or large dumps. Keep it short. "
+            "MEMORY.md and the input folder cannot be deleted."
+        ),
+    )
+    def write_memory(content: str, ctx: Context = ...) -> dict:
+        return run_tool(ctx, tool_write_memory, content)
 
     @mcp.tool(
         description="Run a read-only SQL query against the agent database connection.",

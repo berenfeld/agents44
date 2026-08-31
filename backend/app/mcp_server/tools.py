@@ -12,7 +12,7 @@ from app.errors import APIClientError
 from app.models import SystemAgent
 from app.services.db_provisioning import agent_database_url, agent_schema_name, department_schema_name
 from app.services.email import send_email
-from app.services.workspace import list_path, write_file
+from app.services.workspace import agent_memory_rel, ensure_agent_folder, list_path, write_file
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,15 @@ def tool_write_workspace(path: str, content: str) -> dict:
     if not any(rel.startswith(prefix) for prefix in allowed_prefixes):
         raise APIClientError("Write not allowed for this path", 403)
     return write_file(rel, content)
+
+
+def tool_write_memory(content: str) -> dict:
+    ctx = get_run_context()
+    agent_name = (ctx.get("agent_name") or "").strip()
+    if not agent_name:
+        raise APIClientError("Agent context required", 403)
+    ensure_agent_folder(agent_name)
+    return write_file(agent_memory_rel(agent_name), content)
 
 
 def _require_agent() -> SystemAgent:
@@ -122,6 +131,7 @@ def tool_send_email(subject: str, body: str) -> dict:
 TOOLS = {
     "read_workspace": tool_read_workspace,
     "write_workspace": tool_write_workspace,
+    "write_memory": tool_write_memory,
     "read_db": tool_read_db,
     "write_db": tool_write_db,
     "send_email": tool_send_email,

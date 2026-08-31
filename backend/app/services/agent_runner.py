@@ -27,7 +27,14 @@ from app.services.params import (
     get_timeout_sigterm_grace_seconds,
 )
 from app.services.db_provisioning import build_agent_db_instructions
-from app.services.workspace import ensure_agent_folder, ensure_run_folder, read_prompt_inputs, safe_path, workspace_root
+from app.services.workspace import (
+    build_memory_instructions,
+    ensure_agent_folder,
+    ensure_run_folder,
+    read_prompt_inputs,
+    safe_path,
+    workspace_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -555,6 +562,8 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
             department=agent.department,
             db_user=agent.db_user,
         ),
+        "",
+        build_memory_instructions(agent.name),
         "",
         "# Input files",
         read_prompt_inputs(agent.department, agent.name),

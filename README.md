@@ -80,10 +80,6 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `POST /api/agents/{id}/trigger` | Manual run |
 | `GET /api/runs` | Run history (tokens + cost) |
 | `GET /api/models` | Supported Claude models |
-| `GET /api/claude/conversations` | List Claude chat tabs (`?archived=true` for archived) |
-| `POST /api/claude/conversations` | Create a chat tab |
-| `POST /api/claude/conversations/{id}/messages` | Send a prompt in a tab |
-| `POST /api/claude/conversations/{id}/archive` | Hide a tab (messages stay in the database) |
 | `GET/POST/PUT/DELETE /api/files` | Workspace file CRUD (files only) |
 
 All mutating API calls use `Content-Type: application/json`.
@@ -96,6 +92,7 @@ All mutating API calls use `Content-Type: application/json`.
 ├── {department}/input/     # included for agents in that department
 └── {agent_name}/
     ├── input/
+    │   └── MEMORY.md          # created per agent; included in every prompt; write_memory MCP tool
     └── .runs/
         └── YYYYMMDD-HHMMSS-{run_id}/
             ├── prompt.txt
