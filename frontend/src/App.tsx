@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { AppNav } from "@/components/ui/app-nav";
+import { DesktopNotificationsToggle } from "@/components/desktop-notifications-toggle";
+import { RunDesktopNotificationsProvider } from "@/components/run-desktop-notifications-provider";
 import { ConfirmModal } from "@/components/ui/modal";
 import AgentsPage from "@/pages/AgentsPage";
 import AgentsRunsPage from "@/pages/AgentsRunsPage";
@@ -23,9 +25,12 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
         <div className="mx-auto flex w-full max-w-none flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center justify-between gap-3 text-sm md:order-2">
             <span className="min-w-0 truncate text-slate-600">{email}</span>
-            <Button variant="outline" onClick={() => setLogoutOpen(true)}>
-              Logout
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <DesktopNotificationsToggle />
+              <Button variant="outline" onClick={() => setLogoutOpen(true)}>
+                Logout
+              </Button>
+            </div>
           </div>
           <div className="flex flex-col gap-3 md:order-1 md:flex-row md:items-center md:gap-4">
             <strong className="shrink-0">Agents44</strong>
@@ -106,12 +111,14 @@ export default function App() {
   }
 
   return (
-    <Layout
-      email={email}
-      onLogout={async () => {
-        await api.post("/auth/logout");
-        setEmail(null);
-      }}
-    />
+    <RunDesktopNotificationsProvider>
+      <Layout
+        email={email}
+        onLogout={async () => {
+          await api.post("/auth/logout");
+          setEmail(null);
+        }}
+      />
+    </RunDesktopNotificationsProvider>
   );
 }

@@ -13,6 +13,20 @@ runs_bp = Blueprint("runs", __name__)
 models_bp = Blueprint("models", __name__)
 
 
+def _parse_run_status_filter(raw: str | None) -> list[RunStatus] | None:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    wanted = [item.strip() for item in text.split(",") if item.strip()]
+    if not wanted:
+        raise APIClientError("Invalid run status", 400)
+    allowed = {status.value: status for status in RunStatus}
+    unknown = [item for item in wanted if item not in allowed]
+    if unknown:
+        raise APIClientError("Invalid run status", 400)
+    return [allowed[item] for item in wanted]
+
+
 @models_bp.get("")
 @api_endpoint
 @login_required
@@ -26,7 +40,10 @@ def list_models():
 def list_runs():
     page = max(int(request.args.get("page", 1)), 1)
     per_page = min(max(int(request.args.get("per_page", 50)), 1), 200)
+    statuses = _parse_run_status_filter(request.args.get("status"))
     query = SystemAgentRun.query.options(joinedload(SystemAgentRun.agent)).order_by(SystemAgentRun.id.desc())
+    if statuses:
+        query = query.filter(SystemAgentRun.status.in_(statuses))
     pagination = db.paginate(query, page=page, per_page=per_page, error_out=False)
     return jsonify(
         {

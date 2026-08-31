@@ -1,13 +1,38 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, SystemParam } from "@/api/client";
-import { Button, Label } from "@/components/ui/primitives";
+import { api, SystemParam, userFacingApiError } from "@/api/client";
+import { useDesktopNotifications } from "@/hooks/useDesktopNotifications";
+import { NoticeModal } from "@/components/ui/modal";
+import { Button, Label, Switch } from "@/components/ui/primitives";
+
+function desktopNotificationStatusText(args: {
+  supported: boolean;
+  permission: string;
+  enabled: boolean;
+  busy: boolean;
+}): string {
+  if (!args.supported) {
+    return "This browser does not support desktop notifications.";
+  }
+  if (args.busy) {
+    return args.enabled ? "Turning off..." : "Enabling...";
+  }
+  if (args.permission === "denied") {
+    return "Blocked by the browser. Allow notifications for this site, then enable again.";
+  }
+  if (args.enabled) {
+    return "On. You will get a desktop alert when an agent starts or finishes. Keep this tab open.";
+  }
+  return "Off. Enable to get a desktop alert when an agent starts or finishes.";
+}
 
 export default function SettingsPage() {
+  const notifications = useDesktopNotifications();
   const [params, setParams] = useState<SystemParam[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -33,6 +58,35 @@ export default function SettingsPage() {
         the Claude CLI on every agent run. Timeout grace values control when SIGTERM and SIGKILL are sent after an
         agent&apos;s configured run timeout.
       </p>
+
+      <div className="rounded-lg border bg-white p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Label htmlFor="desktop-notifications">Desktop notifications</Label>
+            <p className="mt-1 text-sm text-slate-600">
+              {desktopNotificationStatusText({
+                supported: notifications.supported,
+                permission: notifications.permission,
+                enabled: notifications.enabled,
+                busy: notifications.busy,
+              })}
+            </p>
+          </div>
+          <Switch
+            id="desktop-notifications"
+            checked={notifications.enabled}
+            disabled={notifications.busy || !notifications.supported}
+            aria-busy={notifications.busy}
+            onCheckedChange={(value) => {
+              if (value) {
+                void notifications.enable();
+                return;
+              }
+              void notifications.disable();
+            }}
+          />
+        </div>
+      </div>
 
       {loading ? (
         <p>Loading...</p>
@@ -66,8 +120,11 @@ export default function SettingsPage() {
                 });
                 setParams(res.data);
                 setSaved(true);
-              } catch {
-                setError("Could not save settings");
+                setNotice({ title: "Settings saved", message: "System parameters were updated." });
+              } catch (err) {
+                const message = userFacingApiError(err);
+                setError(message);
+                setNotice({ title: "Could not save settings", message });
               } finally {
                 setSaving(false);
               }
@@ -77,6 +134,12 @@ export default function SettingsPage() {
           </Button>
         </div>
       )}
+      <NoticeModal
+        open={!!notice}
+        onOpenChange={(open) => !open && setNotice(null)}
+        title={notice?.title || "Notice"}
+        description={notice ? <p>{notice.message}</p> : null}
+      />
     </div>
   );
 }

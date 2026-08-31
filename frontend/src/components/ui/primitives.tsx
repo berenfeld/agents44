@@ -62,11 +62,13 @@ export function Switch({
   onCheckedChange,
   disabled,
   id,
+  "aria-busy": ariaBusy,
 }: {
   checked: boolean;
   onCheckedChange: (value: boolean) => void;
   disabled?: boolean;
   id?: string;
+  "aria-busy"?: boolean;
 }) {
   return (
     <button
@@ -74,6 +76,7 @@ export function Switch({
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-busy={ariaBusy}
       disabled={disabled}
       onClick={() => {
         if (disabled) return;
