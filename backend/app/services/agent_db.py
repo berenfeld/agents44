@@ -16,6 +16,8 @@ SYSTEM_TABLES = frozenset(
         "alembic_version",
         "system_agents",
         "system_agents_runs",
+        "system_claude_conversations",
+        "system_claude_messages",
         "system_departments",
         "system_params",
     }

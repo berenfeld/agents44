@@ -108,6 +108,35 @@ export type AgentRun = {
 
 export type ModelsResponse = { models: string[]; default: string };
 
+export type ClaudeMessage = {
+  id: number;
+  conversation_id: number;
+  role: "user" | "assistant";
+  status: "pending" | "complete" | "failed";
+  content: string;
+  error_message: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  estimated_cost_usd: number | null;
+  created_at: string | null;
+  finished_at: string | null;
+};
+
+export type ClaudeConversation = {
+  id: number;
+  title: string;
+  agent_id: number;
+  agent_name: string | null;
+  agent_model: string | null;
+  agent_enabled: boolean;
+  archived_at: string | null;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  busy: boolean;
+  messages?: ClaudeMessage[];
+};
+
 export type SystemParam = {
   id: number;
   key: string;

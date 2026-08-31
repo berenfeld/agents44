@@ -11,6 +11,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from app.api.agent_db import agent_db_bp
 from app.api.agents import agents_bp
 from app.api.auth_routes import auth_bp, params_bp
+from app.api.claude import claude_bp
 from app.api.departments import departments_bp
 from app.api.files import files_bp
 from app.api.runs import models_bp, runs_bp
@@ -86,6 +87,7 @@ def create_app() -> Flask:
     app.register_blueprint(agent_db_bp, url_prefix="/api/agent-db")
     app.register_blueprint(files_bp, url_prefix="/api/files")
     app.register_blueprint(params_bp, url_prefix="/api/system-params")
+    app.register_blueprint(claude_bp, url_prefix="/api/claude")
 
     @app.before_request
     def enforce_json_for_mutations():
@@ -121,6 +123,7 @@ def create_app() -> Flask:
                     "/api/departments": {"get": {}, "post": {}, "delete": {}},
                     "/api/runs": {"get": {}},
                     "/api/models": {"get": {}},
+                    "/api/claude/conversations": {"get": {}, "post": {}},
                     "/api/files": {"get": {}, "post": {}, "put": {}, "delete": {}},
                 },
             }

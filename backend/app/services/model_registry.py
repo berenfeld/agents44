@@ -178,6 +178,43 @@ def _find_claude_result(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def extract_claude_text(stdout: str) -> str:
+    """Return the operator-visible assistant reply from Claude CLI stream-json stdout."""
+    result = _find_claude_result(stdout)
+    if result is not None:
+        text = result.get("result")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+    parts: list[str] = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if data.get("type") != "assistant":
+            continue
+        message = data.get("message") or {}
+        for block in message.get("content", []) or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = block.get("text") or ""
+                if text:
+                    parts.append(text)
+    return "".join(parts).strip()
+
+
+def claude_result_is_error(stdout: str) -> bool:
+    result = _find_claude_result(stdout)
+    if result is None:
+        return False
+    return bool(result.get("is_error")) or result.get("subtype") == "error"
+
+
 def parse_claude_result(stdout: str, model: str | None = None) -> tuple[int | None, int | None, float | None]:
     """Return (tokens_in, tokens_out, total_cost_usd) from CLI stdout.
 

@@ -7,6 +7,7 @@ import AgentsPage from "@/pages/AgentsPage";
 import AgentsRunsPage from "@/pages/AgentsRunsPage";
 import AgentFilesPage from "@/pages/AgentFilesPage";
 import AgentDatabasePage from "@/pages/AgentDatabasePage";
+import ClaudePage from "@/pages/ClaudePage";
 import DepartmentsPage from "@/pages/DepartmentsPage";
 import LoginPage from "@/pages/LoginPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -34,6 +35,7 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
       </header>
       <main className="mx-auto w-full max-w-none flex-1 px-4 py-6">
         <Routes>
+          <Route path="/claude" element={<ClaudePage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents_runs" element={<AgentsRunsPage />} />
           <Route path="/runs" element={<Navigate to="/agents_runs" replace />} />

@@ -38,6 +38,21 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   },
 );
 
+export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea({ className, ...props }, ref) {
+    return (
+      <textarea
+        ref={ref}
+        className={cn(
+          "w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400",
+          className,
+        )}
+        {...props}
+      />
+    );
+  },
+);
+
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return <label className={cn("text-sm font-medium text-slate-700", className)} {...props} />;
 }
@@ -45,18 +60,27 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
 export function Switch({
   checked,
   onCheckedChange,
+  disabled,
+  id,
 }: {
   checked: boolean;
   onCheckedChange: (value: boolean) => void;
+  disabled?: boolean;
+  id?: string;
 }) {
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       aria-checked={checked}
-      onClick={() => onCheckedChange(!checked)}
+      disabled={disabled}
+      onClick={() => {
+        if (disabled) return;
+        onCheckedChange(!checked);
+      }}
       className={cn(
-        "relative h-6 w-11 rounded-full transition",
+        "relative h-6 w-11 rounded-full transition disabled:opacity-50",
         checked ? "bg-slate-900" : "bg-slate-300",
       )}
     >

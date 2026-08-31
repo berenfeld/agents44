@@ -6,7 +6,7 @@ from marshmallow import EXCLUDE, Schema, ValidationError, fields, pre_load, vali
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.extensions import db
-from app.models import SystemAgent, SystemAgentRun, SystemDepartment
+from app.models import SystemAgent, SystemAgentRun, SystemClaudeConversation, SystemDepartment
 from app.models.run_status import RunStatus
 from app.services.model_registry import validate_model
 from app.services.scheduler import sync_scheduler_jobs
@@ -179,6 +179,8 @@ def delete_agent(agent_id: int):
     agent = db.session.get(SystemAgent, agent_id)
     if not agent:
         raise APIClientError("Not found", 404)
+    if SystemClaudeConversation.query.filter_by(agent_id=agent_id).first():
+        raise APIClientError("Agent has Claude conversations and cannot be deleted", 400)
     conn = db.session.connection()
     drop_agent_db_access(conn, agent_name=agent.name, db_user=agent.db_user)
     db.session.delete(agent)
