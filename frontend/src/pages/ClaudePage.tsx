@@ -77,9 +77,7 @@ export default function ClaudePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = parseConversationId(searchParams.get("conversation"));
   const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
   const setSearchParamsRef = useRef(setSearchParams);
-  setSearchParamsRef.current = setSearchParams;
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tabs, setTabs] = useState<ClaudeConversation[]>([]);
@@ -100,8 +98,17 @@ export default function ClaudePage() {
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    setSearchParamsRef.current = setSearchParams;
+  }, [setSearchParams]);
+
   const setSelectedId = useCallback((id: number | null) => {
     if (selectedIdRef.current === id) return;
+    selectedIdRef.current = id;
     setSearchParamsRef.current(
       (current) => {
         const params = new URLSearchParams(current);
