@@ -458,6 +458,42 @@ export default function ClaudePage() {
           </div>
         ) : (
           <>
+            <form
+              className="border-b bg-white p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendPrompt();
+              }}
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <Textarea
+                  aria-label="Prompt"
+                  rows={3}
+                  placeholder={archivedConversation ? "Archived conversations are read-only" : "Write a prompt..."}
+                  value={prompt}
+                  disabled={sending || archivedConversation || !selectedAgent?.enabled}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      if (canSend) void sendPrompt();
+                    }
+                  }}
+                />
+                <div className="flex shrink-0 gap-2">
+                  {busy ? (
+                    <Button type="button" variant="destructive" disabled={stopping} onClick={() => void stopReply()}>
+                      {stopping ? "Stopping..." : "Stop"}
+                    </Button>
+                  ) : (
+                    <Button type="submit" disabled={!canSend}>
+                      {sending ? "Sending..." : "Send"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </form>
+
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
               {archivedConversation ? (
                 <div className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
@@ -498,42 +534,6 @@ export default function ClaudePage() {
               )}
               <div ref={bottomRef} />
             </div>
-
-            <form
-              className="border-t bg-white p-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void sendPrompt();
-              }}
-            >
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <Textarea
-                  aria-label="Prompt"
-                  rows={3}
-                  placeholder={archivedConversation ? "Archived conversations are read-only" : "Write a prompt..."}
-                  value={prompt}
-                  disabled={sending || archivedConversation || !selectedAgent?.enabled}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      if (canSend) void sendPrompt();
-                    }
-                  }}
-                />
-                <div className="flex shrink-0 gap-2">
-                  {busy ? (
-                    <Button type="button" variant="destructive" disabled={stopping} onClick={() => void stopReply()}>
-                      {stopping ? "Stopping..." : "Stop"}
-                    </Button>
-                  ) : (
-                    <Button type="submit" disabled={!canSend}>
-                      {sending ? "Sending..." : "Send"}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </form>
           </>
         )}
       </div>
