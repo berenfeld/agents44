@@ -1,0 +1,18 @@
+---
+description: Run frontend lint, typecheck, and build before git push
+alwaysApply: true
+---
+
+# Verify frontend before push
+
+Before `git push`, run the same frontend checks Docker/CI uses. Do not push if they fail.
+
+From `frontend/`:
+
+```bash
+npm run validate && npm run build
+```
+
+`validate` is `eslint` + `tsc --noEmit`. The image build runs `npm run validate && npm run build` (see `Dockerfile`).
+
+If those commands fail, fix the errors, re-run until they pass, then push. Do not skip this because the change looks small or is not a `.tsx` file you edited this turn — any push can include frontend that CI will compile.
