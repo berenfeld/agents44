@@ -76,6 +76,10 @@ function AssistantBody({ message }: { message: ClaudeMessage }) {
 export default function ClaudePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = parseConversationId(searchParams.get("conversation"));
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const setSearchParamsRef = useRef(setSearchParams);
+  setSearchParamsRef.current = setSearchParams;
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tabs, setTabs] = useState<ClaudeConversation[]>([]);
@@ -95,25 +99,22 @@ export default function ClaudePage() {
   const [loadingArchived, setLoadingArchived] = useState(false);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const initialSelectedIdRef = useRef(selectedId);
 
-  const setSelectedId = useCallback(
-    (id: number | null) => {
-      setSearchParams(
-        (current) => {
-          const params = new URLSearchParams(current);
-          if (id) {
-            params.set("conversation", String(id));
-          } else {
-            params.delete("conversation");
-          }
-          return params;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
+  const setSelectedId = useCallback((id: number | null) => {
+    if (selectedIdRef.current === id) return;
+    setSearchParamsRef.current(
+      (current) => {
+        const params = new URLSearchParams(current);
+        if (id) {
+          params.set("conversation", String(id));
+        } else {
+          params.delete("conversation");
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  }, []);
 
   const loadTabs = useCallback(async () => {
     const [agentsRes, tabsRes] = await Promise.all([
@@ -133,6 +134,9 @@ export default function ClaudePage() {
 
   const loadConversation = useCallback(async (id: number) => {
     const res = await api.get<ClaudeConversation>(`/claude/conversations/${id}`);
+    if (selectedIdRef.current !== id) {
+      return res.data;
+    }
     setConversation(res.data);
     setAgentId(res.data.agent_id);
     setTabs((current) => {
@@ -154,7 +158,7 @@ export default function ClaudePage() {
       try {
         const { tabs: nextTabs } = await loadTabs();
         if (cancelled) return;
-        if (!initialSelectedIdRef.current && nextTabs[0]) {
+        if (selectedIdRef.current == null && nextTabs[0]) {
           setSelectedId(nextTabs[0].id);
         }
       } catch (err) {
@@ -175,10 +179,15 @@ export default function ClaudePage() {
       setConversation(null);
       return;
     }
+    let cancelled = false;
     loadConversation(selectedId).catch((err) => {
+      if (cancelled || selectedIdRef.current !== selectedId) return;
       setConversation(null);
       setNotice({ title: "Could not load conversation", message: userFacingApiError(err) });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [loadConversation, selectedId]);
 
   const busy = Boolean(conversation?.busy || conversation?.messages?.some((message) => message.status === "pending"));
