@@ -1,6 +1,7 @@
 export const CRONTAB_HELPER_URL = "https://crontab.guru/";
 
-const CRON_FIELD = /^(\*|[A-Za-z0-9]+(-[A-Za-z0-9]+)?(\/[0-9]+)?)(,(\*|[A-Za-z0-9]+(-[A-Za-z0-9]+)?(\/[0-9]+)?))*$/;
+const CRON_FIELD =
+  /^(\*|([A-Za-z0-9]+(-[A-Za-z0-9]+)?))(\/[0-9]+)?(,(\*|([A-Za-z0-9]+(-[A-Za-z0-9]+)?))(\/[0-9]+)?)*$/;
 
 export function getCrontabError(value: string): string | null {
   const trimmed = value.trim();
