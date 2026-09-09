@@ -66,7 +66,9 @@ function filesQueryString(
 function isProtectedWorkspacePath(path: string): boolean {
   const parts = path.split("/").filter(Boolean);
   if (parts.length === 2 && parts[1] === "input") return true;
+  if (parts.length === 3 && parts[2] === "input") return true;
   if (parts.length === 3 && parts[1] === "input" && parts[2] === "MEMORY.md") return true;
+  if (parts.length === 4 && parts[2] === "input" && parts[3] === "MEMORY.md") return true;
   return false;
 }
 

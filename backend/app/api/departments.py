@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from marshmallow import Schema, fields, validate
+from sqlalchemy import func
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -35,6 +36,8 @@ def create_department():
     name = validate_department_name(data["name"])
     if SystemDepartment.query.filter_by(name=name).first():
         raise APIClientError("Department already exists", 400)
+    if SystemAgent.query.filter(func.lower(SystemAgent.name) == name.lower()).first():
+        raise APIClientError("Department name cannot match an agent name", 400)
 
     row = SystemDepartment(name=name)
     db.session.add(row)

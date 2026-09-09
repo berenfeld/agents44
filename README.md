@@ -93,15 +93,16 @@ All mutating API calls use `Content-Type: application/json`.
 ```
 .workspace/                 # bind-mounted into the container
 ├── common_input/           # included in every agent prompt
-├── {department}/input/     # included for agents in that department
-└── {agent_name}/
-    ├── input/
-    │   └── MEMORY.md          # created per agent; included in every prompt; write_memory MCP tool
-    └── .runs/
-        └── YYYYMMDD-HHMMSS-{run_id}/
-            ├── prompt.txt
-            ├── log.txt
-            └── summary.md
+└── {department}/
+    ├── input/             # included for every agent in that department
+    └── {agent_name}/
+        ├── input/
+        │   └── MEMORY.md   # created per agent; included in every prompt; write_memory MCP tool
+        └── .runs/
+            └── YYYYMMDD-HHMMSS-{run_id}/
+                ├── prompt.txt
+                ├── log.txt
+                └── summary.md
 ```
 
 ## system_params keys (CAPITAL_LETTERS)

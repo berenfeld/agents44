@@ -16,6 +16,7 @@ from app.services.db_provisioning import (
 COMMON_INPUT = "common_input"
 DEPARTMENT_INPUT = "input"
 AGENT_MEMORY_FILE = "MEMORY.md"
+RESERVED_AGENT_NAMES = frozenset({DEPARTMENT_INPUT, COMMON_INPUT, ".runs", ".venv"})
 
 
 def workspace_root() -> Path:
@@ -44,10 +45,26 @@ def validate_department_name(name: str) -> str:
     return normalized
 
 
+def validate_agent_folder_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise APIClientError("Agent name is required", 400)
+    if "/" in normalized or "\\" in normalized:
+        raise APIClientError("Agent name cannot contain slashes", 400)
+    if normalized in RESERVED_AGENT_NAMES or normalized.lower() in RESERVED_AGENT_NAMES:
+        raise APIClientError(f"Agent name '{normalized}' is reserved", 400)
+    safe_path(normalized)
+    return normalized
+
+
 def ensure_department_folder(department: str) -> None:
     dept_dir = safe_path(department)
     dept_dir.mkdir(parents=True, exist_ok=True)
     (dept_dir / DEPARTMENT_INPUT).mkdir(exist_ok=True)
+
+
+def agent_workspace_rel(department: str, agent_name: str) -> str:
+    return f"{department}/{agent_name}"
 
 
 def ensure_workspace_layout() -> None:
@@ -60,7 +77,7 @@ def ensure_workspace_layout() -> None:
     for dept in departments:
         ensure_department_folder(dept.name)
     for agent in SystemAgent.query.order_by(SystemAgent.name).all():
-        ensure_agent_folder(agent.name)
+        ensure_agent_folder(agent.department, agent.name)
 
     conn = db.session.connection()
     for dept in departments:
@@ -79,12 +96,12 @@ def run_folder_name(started_at: datetime, run_id: int) -> str:
     return f"{started_at.strftime('%Y%m%d-%H%M%S')}-{run_id}"
 
 
-def agent_run_dir(agent_name: str, started_at: datetime, run_id: int) -> str:
-    return f"{agent_name}/.runs/{run_folder_name(started_at, run_id)}"
+def agent_run_dir(department: str, agent_name: str, started_at: datetime, run_id: int) -> str:
+    return f"{agent_workspace_rel(department, agent_name)}/.runs/{run_folder_name(started_at, run_id)}"
 
 
-def ensure_run_folder(agent_name: str, started_at: datetime, run_id: int) -> dict[str, str]:
-    run_dir = safe_path(agent_run_dir(agent_name, started_at, run_id))
+def ensure_run_folder(department: str, agent_name: str, started_at: datetime, run_id: int) -> dict[str, str]:
+    run_dir = safe_path(agent_run_dir(department, agent_name, started_at, run_id))
     run_dir.mkdir(parents=True, exist_ok=True)
     root = workspace_root()
     return {
@@ -95,12 +112,12 @@ def ensure_run_folder(agent_name: str, started_at: datetime, run_id: int) -> dic
     }
 
 
-def agent_memory_rel(agent_name: str) -> str:
-    return f"{agent_name}/{DEPARTMENT_INPUT}/{AGENT_MEMORY_FILE}"
+def agent_memory_rel(department: str, agent_name: str) -> str:
+    return f"{agent_workspace_rel(department, agent_name)}/{DEPARTMENT_INPUT}/{AGENT_MEMORY_FILE}"
 
 
-def ensure_agent_folder(agent_name: str) -> None:
-    agent_dir = safe_path(agent_name)
+def ensure_agent_folder(department: str, agent_name: str) -> None:
+    agent_dir = safe_path(agent_workspace_rel(department, agent_name))
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / DEPARTMENT_INPUT).mkdir(exist_ok=True)
     (agent_dir / ".runs").mkdir(exist_ok=True)
@@ -114,9 +131,32 @@ def protected_path_error(path: str, *, action: str = "delete") -> str | None:
     parts = [part for part in rel.split("/") if part]
     if len(parts) == 2 and parts[1] == DEPARTMENT_INPUT:
         return f"Cannot {action} the input folder"
+    if len(parts) == 3 and parts[2] == DEPARTMENT_INPUT:
+        return f"Cannot {action} the input folder"
     if len(parts) == 3 and parts[1] == DEPARTMENT_INPUT and parts[2] == AGENT_MEMORY_FILE:
         return f"Cannot {action} MEMORY.md"
+    if len(parts) == 4 and parts[2] == DEPARTMENT_INPUT and parts[3] == AGENT_MEMORY_FILE:
+        return f"Cannot {action} MEMORY.md"
     return None
+
+
+def agent_may_write_path(relative: str, *, department: str, agent_name: str) -> bool:
+    from app.models import SystemAgent
+
+    rel = relative.strip().lstrip("/")
+    if not rel or not department or not agent_name:
+        return False
+    own_dir = agent_workspace_rel(department, agent_name)
+    if rel == own_dir or rel.startswith(f"{own_dir}/"):
+        return True
+    if rel != department and not rel.startswith(f"{department}/"):
+        return False
+    rest = rel[len(department) :].lstrip("/")
+    first = rest.split("/")[0] if rest else ""
+    if not first or first == DEPARTMENT_INPUT or first == agent_name:
+        return True
+    sibling = SystemAgent.query.filter_by(department=department, name=first).first()
+    return sibling is None
 
 
 def _file_stat_fields(path: Path) -> dict:
@@ -265,10 +305,10 @@ def read_prompt_inputs(department: str, agent_name: str, max_chars: int = 50000)
         sections.append(f"# Department common input ({department})\n" + "\n".join(dept_parts))
 
     agent_parts, _ = _read_folder_files(
-        f"{agent_name}/{DEPARTMENT_INPUT}",
+        f"{agent_workspace_rel(department, agent_name)}/{DEPARTMENT_INPUT}",
         max_chars,
         used,
-        skip_rels={agent_memory_rel(agent_name)},
+        skip_rels={agent_memory_rel(department, agent_name)},
     )
     if agent_parts:
         sections.append(f"# Agent input ({agent_name})\n" + "\n".join(agent_parts))
@@ -276,16 +316,16 @@ def read_prompt_inputs(department: str, agent_name: str, max_chars: int = 50000)
     return "\n\n".join(sections)
 
 
-def read_agent_memory(agent_name: str) -> str:
-    target = safe_path(agent_memory_rel(agent_name))
+def read_agent_memory(department: str, agent_name: str) -> str:
+    target = safe_path(agent_memory_rel(department, agent_name))
     if not target.exists() or not target.is_file():
         return ""
     return target.read_text(encoding="utf-8")
 
 
-def build_memory_instructions(agent_name: str) -> str:
-    rel = agent_memory_rel(agent_name)
-    body = read_agent_memory(agent_name).strip()
+def build_memory_instructions(department: str, agent_name: str) -> str:
+    rel = agent_memory_rel(department, agent_name)
+    body = read_agent_memory(department, agent_name).strip()
     content = body if body else "(empty)"
     return "\n".join(
         [

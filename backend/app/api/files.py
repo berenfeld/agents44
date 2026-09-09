@@ -89,6 +89,8 @@ def remove_path():
             raise APIClientError("Cannot delete the common_input folder", 400)
         if SystemDepartment.query.filter_by(name=name).first():
             raise APIClientError("Cannot delete this folder while the department still exists", 400)
-        if SystemAgent.query.filter_by(name=name).first():
+    if len(parts) == 2:
+        department_name, agent_name = parts
+        if SystemAgent.query.filter_by(department=department_name, name=agent_name).first():
             raise APIClientError("Cannot delete this folder while the agent still exists", 400)
     return jsonify(delete_path("/".join(parts)))

@@ -55,8 +55,8 @@ export default function DepartmentsPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Departments</h1>
       <p className="text-sm text-slate-600">
-        Creating a department adds <code>{`{name}/input/`}</code> under the workspace. Deleting a department does not
-        remove workspace files.
+        Creating a department adds <code>{`{name}/input/`}</code> under the workspace. Agents live in{" "}
+        <code>{`{department}/{agent}/`}</code>. Deleting a department does not remove workspace files.
       </p>
 
       <form

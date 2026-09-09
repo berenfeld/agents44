@@ -471,11 +471,11 @@ def _installed_package_version(name: str) -> str:
         return "not installed"
 
 
-def build_system_tools_instructions(agent_name: str) -> str:
+def build_system_tools_instructions(agent_name: str, department: str) -> str:
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     playwright_version = _installed_package_version("playwright")
     browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
-    venv_dir = f"{agent_name}/.venv"
+    venv_dir = f"{department}/{agent_name}/.venv"
     if playwright_version == "not installed":
         private_playwright = (
             f"`{venv_dir}/bin/pip install playwright` then `{venv_dir}/bin/playwright install chromium`"
@@ -555,7 +555,7 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
         f"Model: {agent.model}",
         f"Cron: {agent.crond or '(none)'}",
         "",
-        build_system_tools_instructions(agent.name),
+        build_system_tools_instructions(agent.name, agent.department),
         "",
         build_agent_db_instructions(
             agent_name=agent.name,
@@ -563,7 +563,7 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
             db_user=agent.db_user,
         ),
         "",
-        build_memory_instructions(agent.name),
+        build_memory_instructions(agent.department, agent.name),
         "",
         "# Input files",
         read_prompt_inputs(agent.department, agent.name),
@@ -649,8 +649,8 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         run.started_at = started_at
         db.session.commit()
 
-        ensure_agent_folder(agent.name)
-        paths = ensure_run_folder(agent.name, started_at, run.id)
+        ensure_agent_folder(agent.department, agent.name)
+        paths = ensure_run_folder(agent.department, agent.name, started_at, run.id)
         run.run_dir = paths["run_dir"]
         run.prompt_path = paths["prompt_path"]
         run.log_path = paths["log_path"]

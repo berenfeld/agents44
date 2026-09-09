@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from marshmallow import EXCLUDE, Schema, ValidationError, fields, pre_load, validate
+from sqlalchemy import func
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -17,7 +18,7 @@ from app.services.db_provisioning import (
     drop_agent_db_access,
     refresh_all_cross_grants,
 )
-from app.services.workspace import ensure_agent_folder
+from app.services.workspace import ensure_agent_folder, validate_agent_folder_name
 
 agents_bp = Blueprint("agents", __name__)
 
@@ -112,15 +113,18 @@ def create_agent():
     data = AgentSchema().load(request.get_json(force=True) or {})
     if not validate_model(data["model"]):
         raise APIClientError("Unsupported model", 400)
-    if SystemAgent.query.filter_by(name=data["name"]).first():
+    name = validate_agent_folder_name(data["name"])
+    if SystemAgent.query.filter_by(name=name).first():
         raise APIClientError("Agent name already exists", 400)
+    if SystemDepartment.query.filter(func.lower(SystemDepartment.name) == name.lower()).first():
+        raise APIClientError("Agent name cannot match a department name", 400)
 
     department = _require_department(data["department"])
     conn = db.session.connection()
-    creds = create_agent_role(conn, agent_name=data["name"], department=department)
+    creds = create_agent_role(conn, agent_name=name, department=department)
 
     agent = SystemAgent(
-        name=data["name"],
+        name=name,
         department=department,
         model=data["model"],
         crond=data.get("crond"),
@@ -132,7 +136,7 @@ def create_agent():
     db.session.add(agent)
     db.session.flush()
     refresh_all_cross_grants(conn)
-    ensure_agent_folder(agent.name)
+    ensure_agent_folder(agent.department, agent.name)
     sync_scheduler_jobs()
     return jsonify(agent.to_dict()), 201
 
@@ -156,6 +160,9 @@ def update_agent(agent_id: int):
         raise APIClientError("Not found", 404)
     data = AgentSchema(partial=True).load(request.get_json(force=True) or {})
     if "name" in data and data["name"] != agent.name:
+        new_name = validate_agent_folder_name(data["name"])
+        if SystemDepartment.query.filter(func.lower(SystemDepartment.name) == new_name.lower()).first():
+            raise APIClientError("Agent name cannot match a department name", 400)
         raise APIClientError("Agent name cannot be changed", 400)
     if "department" in data and data["department"] != agent.department:
         raise APIClientError("Department cannot be changed", 400)

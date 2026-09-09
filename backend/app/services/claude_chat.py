@@ -124,7 +124,7 @@ def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -
         f"Department: {agent.department}",
         f"Model: {agent.model}",
         "",
-        build_system_tools_instructions(agent.name),
+        build_system_tools_instructions(agent.name, agent.department),
         "",
         build_agent_db_instructions(
             agent_name=agent.name,
@@ -132,7 +132,7 @@ def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -
             db_user=agent.db_user,
         ),
         "",
-        build_memory_instructions(agent.name),
+        build_memory_instructions(agent.department, agent.name),
         "",
         "# Input files",
         read_prompt_inputs(agent.department, agent.name),
