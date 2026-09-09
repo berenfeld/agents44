@@ -9,9 +9,11 @@ from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.context import run_tool
 from app.mcp_server.tools import (
+    tool_list_whatsapp_conversations,
     tool_read_db,
     tool_read_workspace,
     tool_send_email,
+    tool_send_whatsapp,
     tool_write_db,
     tool_write_memory,
     tool_write_workspace,
@@ -32,7 +34,7 @@ def _build_mcp_server(port: int) -> FastMCP:
 
     mcp = FastMCP(
         "agents44",
-        instructions="Agents44 platform tools for workspace files, agent memory, PostgreSQL, and email.",
+        instructions="Agents44 platform tools for workspace files, agent memory, PostgreSQL, email, and WhatsApp.",
         host="127.0.0.1",
         port=port,
         sse_path="/sse",
@@ -86,6 +88,32 @@ def _build_mcp_server(port: int) -> FastMCP:
     )
     def send_email(subject: str, body: str, ctx: Context = ...) -> dict:
         return run_tool(ctx, tool_send_email, subject, body)
+
+    @mcp.tool(
+        description=(
+            "Send a WhatsApp session message from this department's provisioned number. "
+            "Fails if the department is not provisioned for WhatsApp. "
+            "Pass the client number in to_number (Israeli 05X... or international digits with country code) "
+            "and the full message in message_text. "
+            "To include a website link, put the full URL in message_text with the scheme, "
+            "for example https://example.com/path. Put each URL on its own line after a short sentence. "
+            "Do not use Markdown ([label](url)), HTML <a> tags, or a bare domain without https:// — "
+            "WhatsApp will not turn those into tappable links. "
+            "Website http/https links only; this tool does not send media or WhatsApp deep links."
+        ),
+    )
+    def send_whatsapp(to_number: str, message_text: str, ctx: Context = ...) -> dict:
+        return run_tool(ctx, tool_send_whatsapp, to_number, message_text)
+
+    @mcp.tool(
+        description=(
+            "List this agent's WhatsApp conversations and their messages, oldest message first. "
+            "Only conversations owned by this agent are returned. "
+            "Use this to catch up after a WhatsApp trigger and before sending a reply."
+        ),
+    )
+    def list_whatsapp_conversations(ctx: Context = ...) -> list[dict]:
+        return run_tool(ctx, tool_list_whatsapp_conversations)
 
     _mcp_instance = mcp
     _mcp_port = port

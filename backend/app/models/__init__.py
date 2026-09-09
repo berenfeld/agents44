@@ -10,6 +10,11 @@ from app.models.system_department import SystemDepartment
 from app.models.system_param import SystemParam
 from app.models.run_status import RunStatus
 from app.models.trigger_source import TriggerSource
+from app.models.whatsapp import (
+    SystemWhatsAppConversation,
+    SystemWhatsAppMessage,
+    WhatsAppMessageDirection,
+)
 
 __all__ = [
     "ClaudeMessageRole",
@@ -21,5 +26,8 @@ __all__ = [
     "SystemClaudeMessage",
     "SystemDepartment",
     "SystemParam",
+    "SystemWhatsAppConversation",
+    "SystemWhatsAppMessage",
     "TriggerSource",
+    "WhatsAppMessageDirection",
 ]

@@ -15,6 +15,8 @@ from app.api.claude import claude_bp
 from app.api.departments import departments_bp
 from app.api.files import files_bp
 from app.api.runs import models_bp, runs_bp
+from app.api.webhooks import webhooks_bp
+from app.api.whatsapp import whatsapp_bp
 from app.config import Config
 from app.errors import api_endpoint
 from app.extensions import db
@@ -88,12 +90,16 @@ def create_app() -> Flask:
     app.register_blueprint(files_bp, url_prefix="/api/files")
     app.register_blueprint(params_bp, url_prefix="/api/system-params")
     app.register_blueprint(claude_bp, url_prefix="/api/claude")
+    app.register_blueprint(whatsapp_bp, url_prefix="/api/whatsapp")
+    app.register_blueprint(webhooks_bp, url_prefix="/api/webhooks")
 
     @app.before_request
     def enforce_json_for_mutations():
         if not request.path.startswith("/api/"):
             return None
         if request.path.startswith("/api/auth/google"):
+            return None
+        if request.path.startswith("/api/webhooks/"):
             return None
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             if request.content_length and request.mimetype != "application/json":

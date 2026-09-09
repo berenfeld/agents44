@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Agent, api, userFacingApiError, Department } from "@/api/client";
-import { ConfirmModal, NoticeModal } from "@/components/ui/modal";
+import { ConfirmModal, Modal, NoticeModal } from "@/components/ui/modal";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { Button, Input, Label } from "@/components/ui/primitives";
 import { useTableSort } from "@/hooks/useTableSort";
@@ -20,14 +20,22 @@ export default function DepartmentsPage() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Department | null>(null);
+  const [provisionTarget, setProvisionTarget] = useState<Department | null>(null);
+  const [unprovisionTarget, setUnprovisionTarget] = useState<Department | null>(null);
+  const [fromNumber, setFromNumber] = useState("");
+  const [watiEndpoint, setWatiEndpoint] = useState("");
+  const [watiToken, setWatiToken] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const [notice, setNotice] = useState<{ title: string; message: ReactNode } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
+  const [unprovisioning, setUnprovisioning] = useState(false);
 
   const sortAccessors = useMemo(
     () => ({
       name: (row: Department) => row.name,
       created_at: (row: Department) => row.created_at ?? "",
+      whatsapp: (row: Department) => row.whatsapp_from_number ?? "",
     }),
     [],
   );
@@ -50,6 +58,18 @@ export default function DepartmentsPage() {
 
   const agentCount = (departmentName: string) =>
     agents.filter((agent) => agent.department === departmentName).length;
+
+  const openProvision = (department: Department) => {
+    setFromNumber("");
+    setWatiEndpoint("");
+    setWatiToken("");
+    setError(null);
+    setProvisionTarget(department);
+  };
+
+  const replaceDepartment = (updated: Department) => {
+    setDepartments((rows) => rows.map((row) => (row.id === updated.id ? updated : row)));
+  };
 
   return (
     <div className="space-y-4">
@@ -110,6 +130,13 @@ export default function DepartmentsPage() {
                     direction={sortDir}
                     onSort={toggleSort}
                   />
+                  <SortableTh
+                    label="WhatsApp"
+                    sortKey="whatsapp"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={toggleSort}
+                  />
                   <th className="px-4 py-2">Agents</th>
                   <th className="px-4 py-2">Actions</th>
                 </tr>
@@ -119,15 +146,27 @@ export default function DepartmentsPage() {
                   <tr key={department.id} className="border-t">
                     <td className="px-4 py-2 font-medium">{department.name}</td>
                     <td className="px-4 py-2">{formatDate(department.created_at)}</td>
+                    <td className="px-4 py-2">{department.whatsapp_from_number || "—"}</td>
                     <td className="px-4 py-2">{agentCount(department.name)}</td>
                     <td className="px-4 py-2">
-                      <Button
-                        variant="outline"
-                        disabled={agentCount(department.name) > 0}
-                        onClick={() => setDeleteTarget(department)}
-                      >
-                        Delete
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        {department.wati_configured ? (
+                          <Button variant="outline" onClick={() => setUnprovisionTarget(department)}>
+                            Unprovision WhatsApp
+                          </Button>
+                        ) : (
+                          <Button variant="outline" onClick={() => openProvision(department)}>
+                            Provision WhatsApp
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          disabled={agentCount(department.name) > 0}
+                          onClick={() => setDeleteTarget(department)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -141,9 +180,19 @@ export default function DepartmentsPage() {
                 <DataCardTitle>{department.name}</DataCardTitle>
                 <dl>
                   <DataCardField label="Created">{formatDate(department.created_at)}</DataCardField>
+                  <DataCardField label="WhatsApp">{department.whatsapp_from_number || "—"}</DataCardField>
                   <DataCardField label="Agents">{agentCount(department.name)}</DataCardField>
                 </dl>
                 <DataCardActions>
+                  {department.wati_configured ? (
+                    <Button variant="outline" onClick={() => setUnprovisionTarget(department)}>
+                      Unprovision WhatsApp
+                    </Button>
+                  ) : (
+                    <Button variant="outline" onClick={() => openProvision(department)}>
+                      Provision WhatsApp
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     disabled={agentCount(department.name) > 0}
@@ -157,6 +206,132 @@ export default function DepartmentsPage() {
           </MobileCardList>
         </>
       )}
+
+      <Modal
+        open={!!provisionTarget}
+        onOpenChange={(open) => {
+          if (provisioning && !open) return;
+          if (!open) setProvisionTarget(null);
+        }}
+        title="Provision WhatsApp"
+      >
+        <form
+          className="space-y-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!provisionTarget) return;
+            setError(null);
+            setProvisioning(true);
+            try {
+              const updated = await api.post<Department>(`/departments/${provisionTarget.id}/whatsapp`, {
+                from_number: fromNumber,
+                wati_api_endpoint: watiEndpoint,
+                wati_api_token: watiToken,
+              });
+              replaceDepartment(updated.data);
+              setProvisionTarget(null);
+              setNotice({
+                title: "WhatsApp provisioned",
+                message: (
+                  <div className="space-y-2">
+                    <p>
+                      Paste this webhook URL in WATI (Connectors → Webhooks) and enable the message-received event
+                      only.
+                    </p>
+                    <p className="break-all rounded border bg-slate-50 p-2 font-mono text-xs text-slate-800">
+                      {updated.data.wati_webhook_url}
+                    </p>
+                  </div>
+                ),
+              });
+            } catch (err) {
+              const message = userFacingApiError(err);
+              setError(message);
+              setNotice({ title: "Could not provision WhatsApp", message });
+            } finally {
+              setProvisioning(false);
+            }
+          }}
+        >
+          <p className="text-sm text-slate-600">
+            Provision WhatsApp for <strong>{provisionTarget?.name}</strong>.
+          </p>
+          <div>
+            <Label htmlFor="whatsapp-from-number">Israeli mobile number</Label>
+            <Input
+              id="whatsapp-from-number"
+              placeholder="0501234567"
+              value={fromNumber}
+              onChange={(e) => setFromNumber(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="wati-endpoint">WATI API endpoint</Label>
+            <Input
+              id="wati-endpoint"
+              placeholder="https://live-server-xxxx.wati.io"
+              value={watiEndpoint}
+              onChange={(e) => setWatiEndpoint(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="wati-token">WATI API token</Label>
+            <Input
+              id="wati-token"
+              type="password"
+              autoComplete="off"
+              value={watiToken}
+              onChange={(e) => setWatiToken(e.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" disabled={provisioning} onClick={() => setProvisionTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={provisioning || !fromNumber.trim() || !watiEndpoint.trim() || !watiToken.trim()}
+            >
+              {provisioning ? "Provisioning..." : "Provision"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmModal
+        open={!!unprovisionTarget}
+        onOpenChange={(open) => !open && !unprovisioning && setUnprovisionTarget(null)}
+        title="Unprovision WhatsApp?"
+        confirmLabel="Unprovision"
+        destructive
+        busy={unprovisioning}
+        description={
+          unprovisionTarget ? (
+            <p>
+              Remove WhatsApp from <strong>{unprovisionTarget.name}</strong>? The webhook URL will stop working.
+              Conversation history is kept.
+            </p>
+          ) : null
+        }
+        onConfirm={async () => {
+          if (!unprovisionTarget) return;
+          const target = unprovisionTarget;
+          setUnprovisioning(true);
+          try {
+            const updated = await api.delete<Department>(`/departments/${target.id}/whatsapp`);
+            setUnprovisionTarget(null);
+            replaceDepartment(updated.data);
+            setNotice({ title: "WhatsApp unprovisioned", message: `Removed WhatsApp from ${target.name}.` });
+          } catch (err) {
+            const message = userFacingApiError(err);
+            setUnprovisionTarget(null);
+            setError(message);
+            setNotice({ title: "Could not unprovision WhatsApp", message });
+          } finally {
+            setUnprovisioning(false);
+          }
+        }}
+      />
 
       <ConfirmModal
         open={!!deleteTarget}
@@ -194,7 +369,7 @@ export default function DepartmentsPage() {
         open={!!notice}
         onOpenChange={(open) => !open && setNotice(null)}
         title={notice?.title || "Notice"}
-        description={notice ? <p>{notice.message}</p> : null}
+        description={notice ? (typeof notice.message === "string" ? <p>{notice.message}</p> : notice.message) : null}
       />
     </div>
   );

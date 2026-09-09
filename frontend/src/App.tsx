@@ -13,6 +13,7 @@ import ClaudePage from "@/pages/ClaudePage";
 import DepartmentsPage from "@/pages/DepartmentsPage";
 import LoginPage from "@/pages/LoginPage";
 import SettingsPage from "@/pages/SettingsPage";
+import WhatsAppPage from "@/pages/WhatsAppPage";
 import { Button } from "@/components/ui/primitives";
 import { AppFooter } from "@/components/ui/app-footer";
 
@@ -41,6 +42,7 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
       <main className="mx-auto w-full max-w-none flex-1 px-4 py-6">
         <Routes>
           <Route path="/claude" element={<ClaudePage />} />
+          <Route path="/whatsapp" element={<WhatsAppPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents_runs" element={<AgentsRunsPage />} />
           <Route path="/runs" element={<Navigate to="/agents_runs" replace />} />

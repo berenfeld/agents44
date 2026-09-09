@@ -31,6 +31,7 @@ from app.services.params import (
     get_timeout_sigkill_grace_seconds,
     get_timeout_sigterm_grace_seconds,
 )
+from app.services.whatsapp import build_whatsapp_instructions
 from app.services.workspace import build_memory_instructions, read_prompt_inputs, workspace_root
 
 logger = logging.getLogger(__name__)
@@ -136,13 +137,20 @@ def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -
         "",
         "# Input files",
         read_prompt_inputs(agent.department, agent.name),
-        "",
-        "# Conversation",
-        "You are chatting with the platform operator. Reply to the latest user message.",
-        "Previous turns are included for context. Do not write a run summary file.",
-        "Use tools when they help answer the operator.",
-        "",
     ]
+    whatsapp = build_whatsapp_instructions(agent.department)
+    if whatsapp:
+        lines.extend(["", whatsapp])
+    lines.extend(
+        [
+            "",
+            "# Conversation",
+            "You are chatting with the platform operator. Reply to the latest user message.",
+            "Previous turns are included for context. Do not write a run summary file.",
+            "Use tools when they help answer the operator.",
+            "",
+        ]
+    )
     for message in messages:
         if message.status != ClaudeMessageStatus.complete:
             continue

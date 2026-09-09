@@ -9,9 +9,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.errors import APIClientError
+from app.extensions import db
 from app.models import SystemAgent
 from app.services.db_provisioning import agent_database_url, agent_schema_name, department_schema_name
 from app.services.email import send_email
+from app.services.whatsapp import list_agent_whatsapp_conversations, send_whatsapp
 from app.services.workspace import (
     agent_may_write_path,
     agent_memory_rel,
@@ -61,7 +63,7 @@ def tool_write_memory(content: str) -> dict:
     return write_file(agent_memory_rel(department, agent_name), content)
 
 
-def _require_agent() -> SystemAgent:
+def _require_agent_row() -> SystemAgent:
     ctx = get_run_context()
     agent_name = ctx.get("agent_name", "").strip()
     if not agent_name:
@@ -69,6 +71,11 @@ def _require_agent() -> SystemAgent:
     agent = SystemAgent.query.filter_by(name=agent_name).first()
     if not agent:
         raise APIClientError("Agent not found", 404)
+    return agent
+
+
+def _require_agent() -> SystemAgent:
+    agent = _require_agent_row()
     if not agent.db_user or not agent.db_password:
         raise APIClientError("Agent database credentials not configured", 404)
     return agent
@@ -136,6 +143,18 @@ def tool_send_email(subject: str, body: str) -> dict:
     return {"sent": True, "to": current_app.config["ADMIN_EMAIL"]}
 
 
+def tool_send_whatsapp(to_number: str, message_text: str) -> dict:
+    agent = _require_agent_row()
+    result = send_whatsapp(agent, to_number, message_text)
+    db.session.commit()
+    return result
+
+
+def tool_list_whatsapp_conversations() -> list[dict]:
+    agent = _require_agent_row()
+    return list_agent_whatsapp_conversations(agent.id)
+
+
 TOOLS = {
     "read_workspace": tool_read_workspace,
     "write_workspace": tool_write_workspace,
@@ -143,4 +162,6 @@ TOOLS = {
     "read_db": tool_read_db,
     "write_db": tool_write_db,
     "send_email": tool_send_email,
+    "send_whatsapp": tool_send_whatsapp,
+    "list_whatsapp_conversations": tool_list_whatsapp_conversations,
 }

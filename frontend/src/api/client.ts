@@ -40,6 +40,9 @@ export type Department = {
   id: number;
   name: string;
   created_at: string | null;
+  whatsapp_from_number: string | null;
+  wati_configured: boolean;
+  wati_webhook_url?: string;
 };
 
 export type AgentActiveRun = {
@@ -135,6 +138,28 @@ export type ClaudeConversation = {
   updated_at: string | null;
   busy: boolean;
   messages?: ClaudeMessage[];
+};
+
+export type WhatsAppMessage = {
+  id: number;
+  conversation_id: number;
+  direction: "inbound" | "outbound";
+  body: string;
+  wati_message_id: string | null;
+  created_at: string | null;
+};
+
+export type WhatsAppConversation = {
+  id: number;
+  agent_id: number;
+  agent_name: string | null;
+  department: string | null;
+  from_number: string;
+  to_number: string;
+  created_at: string | null;
+  updated_at: string | null;
+  last_message_preview?: string | null;
+  messages?: WhatsAppMessage[];
 };
 
 export type SystemParam = {

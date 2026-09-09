@@ -27,6 +27,7 @@ from app.services.params import (
     get_timeout_sigterm_grace_seconds,
 )
 from app.services.db_provisioning import build_agent_db_instructions
+from app.services.whatsapp import build_whatsapp_instructions
 from app.services.workspace import (
     build_memory_instructions,
     ensure_agent_folder,
@@ -568,6 +569,9 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
         "# Input files",
         read_prompt_inputs(agent.department, agent.name),
     ]
+    whatsapp = build_whatsapp_instructions(agent.department)
+    if whatsapp:
+        lines.extend(["", whatsapp])
     if payload:
         lines.extend(["", "# Trigger payload", json.dumps(payload, indent=2)])
     if summary_path:

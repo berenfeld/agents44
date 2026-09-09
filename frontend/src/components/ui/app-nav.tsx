@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/claude", label: "Claude", match: (path: string) => path.startsWith("/claude") },
+  { to: "/whatsapp", label: "WhatsApp", match: (path: string) => path.startsWith("/whatsapp") },
   { to: "/agents", label: "Agents", match: (path: string) => path === "/agents" },
   { to: "/agents_runs", label: "Agents Runs", match: (path: string) => path.startsWith("/agents_runs") || path.startsWith("/runs") },
   { to: "/departments", label: "Departments", match: (path: string) => path.startsWith("/departments") },
