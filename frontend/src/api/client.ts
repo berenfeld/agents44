@@ -43,6 +43,8 @@ export type Department = {
   whatsapp_from_number: string | null;
   wati_configured: boolean;
   wati_webhook_url?: string;
+  email_address: string | null;
+  email_configured: boolean;
 };
 
 export type AgentActiveRun = {
@@ -160,6 +162,41 @@ export type WhatsAppConversation = {
   updated_at: string | null;
   last_message_preview?: string | null;
   messages?: WhatsAppMessage[];
+};
+
+export type EmailSendingStatus = "pending" | "sent" | "fail" | "canceled";
+export type EmailContentType = "html" | "plain";
+
+export type EmailMessage = {
+  id: number;
+  agent_id: number;
+  agent_name: string | null;
+  department: string | null;
+  from_email: string;
+  subject: string;
+  recipients: string[];
+  cc: string[];
+  bcc: string[];
+  message: string;
+  content_type: EmailContentType;
+  sending_status: EmailSendingStatus;
+  created_at: string | null;
+  updated_at: string | null;
+  last_attempt_at: string | null;
+  sent_at: string | null;
+  attempt_count: number;
+  error_message: string | null;
+};
+
+export type EmailWritePayload = {
+  from_email?: string;
+  subject?: string;
+  recipients?: string[];
+  cc?: string[];
+  bcc?: string[];
+  message?: string;
+  content_type?: EmailContentType;
+  sending_status?: EmailSendingStatus;
 };
 
 export type SystemParam = {

@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from marshmallow import EXCLUDE, Schema, fields, validate
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
@@ -10,6 +11,10 @@ from app.services.db_provisioning import (
     create_department_schema,
     drop_department_schema,
     refresh_all_cross_grants,
+)
+from app.services.outbound_email import (
+    provision_department_email,
+    unprovision_department_email,
 )
 from app.services.whatsapp import (
     provision_department_whatsapp,
@@ -26,6 +31,14 @@ class DepartmentSchema(Schema):
         unknown = EXCLUDE
 
     name = fields.Str(required=True, validate=validate.Length(min=1, max=128))
+
+
+class EmailProvisionSchema(Schema):
+    class Meta:
+        unknown = EXCLUDE
+
+    email_address = fields.Str(required=True, validate=validate.Length(min=1, max=254))
+    app_password = fields.Str(required=True, validate=validate.Length(min=1, max=64))
 
 
 class WhatsAppProvisionSchema(Schema):
@@ -48,7 +61,11 @@ def _department_or_404(department_id: int) -> SystemDepartment:
 @api_endpoint
 @login_required
 def list_departments():
-    rows = SystemDepartment.query.order_by(SystemDepartment.name).all()
+    rows = (
+        SystemDepartment.query.options(joinedload(SystemDepartment.email_conf))
+        .order_by(SystemDepartment.name)
+        .all()
+    )
     return jsonify([row.to_dict() for row in rows])
 
 
@@ -95,6 +112,29 @@ def provision_department_whatsapp_route(department_id: int):
 def unprovision_department_whatsapp_route(department_id: int):
     row = _department_or_404(department_id)
     unprovision_department_whatsapp(row)
+    return jsonify(row.to_dict())
+
+
+@departments_bp.post("/<int:department_id>/email")
+@api_endpoint
+@login_required
+def provision_department_email_route(department_id: int):
+    row = _department_or_404(department_id)
+    data = EmailProvisionSchema().load(request.get_json(force=True) or {})
+    provision_department_email(
+        row,
+        email_address=data["email_address"],
+        app_password=data["app_password"],
+    )
+    return jsonify(row.to_dict()), 201
+
+
+@departments_bp.delete("/<int:department_id>/email")
+@api_endpoint
+@login_required
+def unprovision_department_email_route(department_id: int):
+    row = _department_or_404(department_id)
+    unprovision_department_email(row)
     return jsonify(row.to_dict())
 
 

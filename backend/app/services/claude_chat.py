@@ -26,6 +26,7 @@ from app.models.claude_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVE
 from app.services.agent_runner import build_system_tools_instructions
 from app.services.db_provisioning import build_agent_db_instructions
 from app.services.model_registry import claude_result_is_error, extract_claude_text, parse_claude_result
+from app.services.outbound_email import build_email_instructions
 from app.services.params import (
     get_claude_cli_extra_args,
     get_timeout_sigkill_grace_seconds,
@@ -141,6 +142,9 @@ def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -
     whatsapp = build_whatsapp_instructions(agent.department)
     if whatsapp:
         lines.extend(["", whatsapp])
+    email = build_email_instructions(agent.department)
+    if email:
+        lines.extend(["", email])
     lines.extend(
         [
             "",

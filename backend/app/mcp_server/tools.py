@@ -3,7 +3,6 @@ import os
 import threading
 from contextvars import ContextVar
 
-from flask import current_app
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,7 +11,7 @@ from app.errors import APIClientError
 from app.extensions import db
 from app.models import SystemAgent
 from app.services.db_provisioning import agent_database_url, agent_schema_name, department_schema_name
-from app.services.email import send_email
+from app.services.outbound_email import list_agent_emails, queue_agent_email, wake_email_sender
 from app.services.whatsapp import list_agent_whatsapp_conversations, send_whatsapp
 from app.services.workspace import (
     agent_may_write_path,
@@ -138,9 +137,34 @@ def tool_write_db(query: str) -> dict:
     return {"rowcount": len(result)}
 
 
-def tool_send_email(subject: str, body: str) -> dict:
-    send_email(subject, body, current_app.config["ADMIN_EMAIL"])
-    return {"sent": True, "to": current_app.config["ADMIN_EMAIL"]}
+def tool_send_email(
+    source_email: str,
+    subject: str,
+    recipients: list[str],
+    message: str,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    content_type: str = "html",
+) -> dict:
+    agent = _require_agent_row()
+    result = queue_agent_email(
+        agent,
+        source_email=source_email,
+        subject=subject,
+        recipients=recipients,
+        message=message,
+        cc=cc,
+        bcc=bcc,
+        content_type=content_type,
+    )
+    db.session.commit()
+    wake_email_sender()
+    return result
+
+
+def tool_list_emails() -> list[dict]:
+    agent = _require_agent_row()
+    return list_agent_emails(agent.id)
 
 
 def tool_send_whatsapp(to_number: str, message_text: str) -> dict:
@@ -162,6 +186,7 @@ TOOLS = {
     "read_db": tool_read_db,
     "write_db": tool_write_db,
     "send_email": tool_send_email,
+    "list_emails": tool_list_emails,
     "send_whatsapp": tool_send_whatsapp,
     "list_whatsapp_conversations": tool_list_whatsapp_conversations,
 }

@@ -9,6 +9,7 @@ from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.context import run_tool
 from app.mcp_server.tools import (
+    tool_list_emails,
     tool_list_whatsapp_conversations,
     tool_read_db,
     tool_read_workspace,
@@ -84,10 +85,46 @@ def _build_mcp_server(port: int) -> FastMCP:
         return run_tool(ctx, tool_write_db, query)
 
     @mcp.tool(
-        description="Send an email to the platform administrator.",
+        description=(
+            "Queue an email from this department's provisioned Gmail address. "
+            "Fails if the department is not provisioned for email. "
+            "Pass source_email (must match the provisioned address), subject, recipients "
+            "(list of To addresses), optional cc and bcc lists, and message. "
+            "Prefer HTML in message with content_type html; plain text is allowed. "
+            "The email is stored and sent asynchronously; use list_emails to check sending_status. "
+            "Do not read or write email tables with read_db / write_db."
+        ),
     )
-    def send_email(subject: str, body: str, ctx: Context = ...) -> dict:
-        return run_tool(ctx, tool_send_email, subject, body)
+    def send_email(
+        source_email: str,
+        subject: str,
+        recipients: list[str],
+        message: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        content_type: str = "html",
+        ctx: Context = ...,
+    ) -> dict:
+        return run_tool(
+            ctx,
+            tool_send_email,
+            source_email,
+            subject,
+            recipients,
+            message,
+            cc,
+            bcc,
+            content_type,
+        )
+
+    @mcp.tool(
+        description=(
+            "List emails this agent queued, including recipients, cc, bcc, message, "
+            "content_type, and sending_status. Read-only. Only this agent's emails are returned."
+        ),
+    )
+    def list_emails(ctx: Context = ...) -> list[dict]:
+        return run_tool(ctx, tool_list_emails)
 
     @mcp.tool(
         description=(

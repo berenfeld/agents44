@@ -22,20 +22,27 @@ export default function DepartmentsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Department | null>(null);
   const [provisionTarget, setProvisionTarget] = useState<Department | null>(null);
   const [unprovisionTarget, setUnprovisionTarget] = useState<Department | null>(null);
+  const [emailProvisionTarget, setEmailProvisionTarget] = useState<Department | null>(null);
+  const [emailUnprovisionTarget, setEmailUnprovisionTarget] = useState<Department | null>(null);
   const [fromNumber, setFromNumber] = useState("");
   const [watiEndpoint, setWatiEndpoint] = useState("");
   const [watiToken, setWatiToken] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
+  const [appPassword, setAppPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ title: string; message: ReactNode } | null>(null);
   const [creating, setCreating] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [unprovisioning, setUnprovisioning] = useState(false);
+  const [emailProvisioning, setEmailProvisioning] = useState(false);
+  const [emailUnprovisioning, setEmailUnprovisioning] = useState(false);
 
   const sortAccessors = useMemo(
     () => ({
       name: (row: Department) => row.name,
       created_at: (row: Department) => row.created_at ?? "",
       whatsapp: (row: Department) => row.whatsapp_from_number ?? "",
+      email: (row: Department) => row.email_address ?? "",
     }),
     [],
   );
@@ -65,6 +72,13 @@ export default function DepartmentsPage() {
     setWatiToken("");
     setError(null);
     setProvisionTarget(department);
+  };
+
+  const openEmailProvision = (department: Department) => {
+    setEmailAddress("");
+    setAppPassword("");
+    setError(null);
+    setEmailProvisionTarget(department);
   };
 
   const replaceDepartment = (updated: Department) => {
@@ -137,6 +151,13 @@ export default function DepartmentsPage() {
                     direction={sortDir}
                     onSort={toggleSort}
                   />
+                  <SortableTh
+                    label="Email"
+                    sortKey="email"
+                    activeKey={sortKey}
+                    direction={sortDir}
+                    onSort={toggleSort}
+                  />
                   <th className="px-4 py-2">Agents</th>
                   <th className="px-4 py-2">Actions</th>
                 </tr>
@@ -147,6 +168,7 @@ export default function DepartmentsPage() {
                     <td className="px-4 py-2 font-medium">{department.name}</td>
                     <td className="px-4 py-2">{formatDate(department.created_at)}</td>
                     <td className="px-4 py-2">{department.whatsapp_from_number || "—"}</td>
+                    <td className="px-4 py-2">{department.email_address || "—"}</td>
                     <td className="px-4 py-2">{agentCount(department.name)}</td>
                     <td className="px-4 py-2">
                       <div className="flex flex-wrap gap-2">
@@ -157,6 +179,15 @@ export default function DepartmentsPage() {
                         ) : (
                           <Button variant="outline" onClick={() => openProvision(department)}>
                             Provision WhatsApp
+                          </Button>
+                        )}
+                        {department.email_configured ? (
+                          <Button variant="outline" onClick={() => setEmailUnprovisionTarget(department)}>
+                            Unprovision Email
+                          </Button>
+                        ) : (
+                          <Button variant="outline" onClick={() => openEmailProvision(department)}>
+                            Provision Email
                           </Button>
                         )}
                         <Button
@@ -181,6 +212,7 @@ export default function DepartmentsPage() {
                 <dl>
                   <DataCardField label="Created">{formatDate(department.created_at)}</DataCardField>
                   <DataCardField label="WhatsApp">{department.whatsapp_from_number || "—"}</DataCardField>
+                  <DataCardField label="Email">{department.email_address || "—"}</DataCardField>
                   <DataCardField label="Agents">{agentCount(department.name)}</DataCardField>
                 </dl>
                 <DataCardActions>
@@ -191,6 +223,15 @@ export default function DepartmentsPage() {
                   ) : (
                     <Button variant="outline" onClick={() => openProvision(department)}>
                       Provision WhatsApp
+                    </Button>
+                  )}
+                  {department.email_configured ? (
+                    <Button variant="outline" onClick={() => setEmailUnprovisionTarget(department)}>
+                      Unprovision Email
+                    </Button>
+                  ) : (
+                    <Button variant="outline" onClick={() => openEmailProvision(department)}>
+                      Provision Email
                     </Button>
                   )}
                   <Button
@@ -329,6 +370,117 @@ export default function DepartmentsPage() {
             setNotice({ title: "Could not unprovision WhatsApp", message });
           } finally {
             setUnprovisioning(false);
+          }
+        }}
+      />
+
+      <Modal
+        open={!!emailProvisionTarget}
+        onOpenChange={(open) => {
+          if (emailProvisioning && !open) return;
+          if (!open) setEmailProvisionTarget(null);
+        }}
+        title="Provision Email"
+      >
+        <form
+          className="space-y-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!emailProvisionTarget) return;
+            setError(null);
+            setEmailProvisioning(true);
+            try {
+              const updated = await api.post<Department>(`/departments/${emailProvisionTarget.id}/email`, {
+                email_address: emailAddress,
+                app_password: appPassword,
+              });
+              replaceDepartment(updated.data);
+              setEmailProvisionTarget(null);
+              setNotice({
+                title: "Email provisioned",
+                message: `Agents in ${updated.data.name} can send from ${updated.data.email_address} using a Google app password.`,
+              });
+            } catch (err) {
+              const message = userFacingApiError(err);
+              setError(message);
+              setNotice({ title: "Could not provision email", message });
+            } finally {
+              setEmailProvisioning(false);
+            }
+          }}
+        >
+          <p className="text-sm text-slate-600">
+            Provision Gmail sending for <strong>{emailProvisionTarget?.name}</strong>. Use a Google app password, not
+            the account password.
+          </p>
+          <div>
+            <Label htmlFor="department-email-address">Gmail address</Label>
+            <Input
+              id="department-email-address"
+              type="email"
+              placeholder="agent@gmail.com"
+              value={emailAddress}
+              onChange={(e) => setEmailAddress(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="department-app-password">Google app password</Label>
+            <Input
+              id="department-app-password"
+              type="password"
+              autoComplete="off"
+              placeholder="xxxx xxxx xxxx xxxx"
+              value={appPassword}
+              onChange={(e) => setAppPassword(e.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={emailProvisioning}
+              onClick={() => setEmailProvisionTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={emailProvisioning || !emailAddress.trim() || !appPassword.trim()}>
+              {emailProvisioning ? "Provisioning..." : "Provision"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmModal
+        open={!!emailUnprovisionTarget}
+        onOpenChange={(open) => !open && !emailUnprovisioning && setEmailUnprovisionTarget(null)}
+        title="Unprovision email?"
+        confirmLabel="Unprovision"
+        destructive
+        busy={emailUnprovisioning}
+        description={
+          emailUnprovisionTarget ? (
+            <p>
+              Remove email sending from <strong>{emailUnprovisionTarget.name}</strong>? Queued and sent messages are
+              kept.
+            </p>
+          ) : null
+        }
+        onConfirm={async () => {
+          if (!emailUnprovisionTarget) return;
+          const target = emailUnprovisionTarget;
+          setEmailUnprovisioning(true);
+          try {
+            const updated = await api.delete<Department>(`/departments/${target.id}/email`);
+            setEmailUnprovisionTarget(null);
+            replaceDepartment(updated.data);
+            setNotice({ title: "Email unprovisioned", message: `Removed email from ${target.name}.` });
+          } catch (err) {
+            const message = userFacingApiError(err);
+            setEmailUnprovisionTarget(null);
+            setError(message);
+            setNotice({ title: "Could not unprovision email", message });
+          } finally {
+            setEmailUnprovisioning(false);
           }
         }}
       />

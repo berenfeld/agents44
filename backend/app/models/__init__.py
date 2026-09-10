@@ -4,6 +4,12 @@ from app.models.claude_conversation import (
     SystemClaudeConversation,
     SystemClaudeMessage,
 )
+from app.models.email import (
+    EmailContentType,
+    EmailSendingStatus,
+    SystemEmailConf,
+    SystemEmailMessage,
+)
 from app.models.system_agent import SystemAgent
 from app.models.system_agent_run import SystemAgentRun
 from app.models.system_department import SystemDepartment
@@ -19,12 +25,16 @@ from app.models.whatsapp import (
 __all__ = [
     "ClaudeMessageRole",
     "ClaudeMessageStatus",
+    "EmailContentType",
+    "EmailSendingStatus",
     "RunStatus",
     "SystemAgent",
     "SystemAgentRun",
     "SystemClaudeConversation",
     "SystemClaudeMessage",
     "SystemDepartment",
+    "SystemEmailConf",
+    "SystemEmailMessage",
     "SystemParam",
     "SystemWhatsAppConversation",
     "SystemWhatsAppMessage",

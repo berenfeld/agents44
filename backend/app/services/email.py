@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def send_email(subject: str, body: str, to_email: str | None = None) -> None:
+    """Send an admin notification using env SMTP_USER / SMTP_APP_PASSWORD."""
     admin = to_email or current_app.config["ADMIN_EMAIL"]
     configured_admin = current_app.config["ADMIN_EMAIL"]
     if admin != configured_admin:

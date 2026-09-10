@@ -21,6 +21,7 @@ from app.extensions import db
 from app.models import RunStatus, SystemAgent, SystemAgentRun, TriggerSource
 from app.services.email import maybe_notify_run
 from app.services.model_registry import parse_claude_result
+from app.services.outbound_email import build_email_instructions
 from app.services.params import (
     get_claude_cli_extra_args,
     get_timeout_sigkill_grace_seconds,
@@ -572,6 +573,9 @@ def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_pat
     whatsapp = build_whatsapp_instructions(agent.department)
     if whatsapp:
         lines.extend(["", whatsapp])
+    email = build_email_instructions(agent.department)
+    if email:
+        lines.extend(["", email])
     if payload:
         lines.extend(["", "# Trigger payload", json.dumps(payload, indent=2)])
     if summary_path:

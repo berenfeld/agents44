@@ -96,6 +96,22 @@ SEED_PARAMS = [
             "(default 600 = 10 minutes). Must be >= TIMEOUT_SIGTERM_GRACE_SECONDS."
         ),
     },
+    {
+        "key": "EMAIL_SEND_INTERVAL_SECONDS",
+        "value": "300",
+        "description": (
+            "How often the backend retries pending agent emails (default 300 = 5 minutes). "
+            "A new queued email also wakes the sender immediately."
+        ),
+    },
+    {
+        "key": "EMAIL_SEND_GIVE_UP_SECONDS",
+        "value": "86400",
+        "description": (
+            "Seconds after an email is created before a still-pending send is marked fail "
+            "(default 86400 = 24 hours). Emails are never deleted."
+        ),
+    },
 ]
 
 DEFAULT_TIMEOUT_SIGTERM_GRACE_SECONDS = 300

@@ -14,6 +14,7 @@ import DepartmentsPage from "@/pages/DepartmentsPage";
 import LoginPage from "@/pages/LoginPage";
 import SettingsPage from "@/pages/SettingsPage";
 import WhatsAppPage from "@/pages/WhatsAppPage";
+import EmailsPage from "@/pages/EmailsPage";
 import { Button } from "@/components/ui/primitives";
 import { AppFooter } from "@/components/ui/app-footer";
 
@@ -43,6 +44,7 @@ function Layout({ email, onLogout }: { email: string; onLogout: () => void }) {
         <Routes>
           <Route path="/claude" element={<ClaudePage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
+          <Route path="/emails" element={<EmailsPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents_runs" element={<AgentsRunsPage />} />
           <Route path="/runs" element={<Navigate to="/agents_runs" replace />} />

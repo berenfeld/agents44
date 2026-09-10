@@ -19,7 +19,11 @@ SYSTEM_TABLES = frozenset(
         "system_claude_conversations",
         "system_claude_messages",
         "system_departments",
+        "system_email_conf",
+        "system_email_messages",
         "system_params",
+        "system_whatsapp_conversations",
+        "system_whatsapp_messages",
     }
 )
 

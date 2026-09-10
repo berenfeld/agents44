@@ -13,6 +13,7 @@ from app.api.agents import agents_bp
 from app.api.auth_routes import auth_bp, params_bp
 from app.api.claude import claude_bp
 from app.api.departments import departments_bp
+from app.api.emails import emails_bp
 from app.api.files import files_bp
 from app.api.runs import models_bp, runs_bp
 from app.api.webhooks import webhooks_bp
@@ -22,6 +23,7 @@ from app.errors import api_endpoint
 from app.extensions import db
 from app.mcp_server.server import start_mcp_server
 from app.services.model_registry import init_model_registry
+from app.services.outbound_email import init_email_sender
 from app.services.params import seed_system_params
 from app.services.scheduler import init_scheduler
 from app.services.workspace import ensure_workspace_layout
@@ -91,6 +93,7 @@ def create_app() -> Flask:
     app.register_blueprint(params_bp, url_prefix="/api/system-params")
     app.register_blueprint(claude_bp, url_prefix="/api/claude")
     app.register_blueprint(whatsapp_bp, url_prefix="/api/whatsapp")
+    app.register_blueprint(emails_bp, url_prefix="/api/emails")
     app.register_blueprint(webhooks_bp, url_prefix="/api/webhooks")
 
     @app.before_request
@@ -130,6 +133,8 @@ def create_app() -> Flask:
                     "/api/runs": {"get": {}},
                     "/api/models": {"get": {}},
                     "/api/claude/conversations": {"get": {}, "post": {}},
+                    "/api/whatsapp/conversations": {"get": {}},
+                    "/api/emails": {"get": {}, "patch": {}},
                     "/api/files": {"get": {}, "post": {}, "put": {}, "delete": {}},
                 },
             }
@@ -144,6 +149,9 @@ def create_app() -> Flask:
             if not app.config.get("SCHEDULER_STARTED"):
                 init_scheduler(app)
                 app.config["SCHEDULER_STARTED"] = True
+            if not app.config.get("EMAIL_SENDER_STARTED"):
+                init_email_sender(app)
+                app.config["EMAIL_SENDER_STARTED"] = True
             if not app.config.get("MCP_STARTED"):
                 start_mcp_server(app, app.config["MCP_PORT"])
                 app.config["MCP_STARTED"] = True

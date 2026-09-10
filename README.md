@@ -75,6 +75,8 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `GET /api/departments` | List departments |
 | `POST /api/departments` | Create department (creates workspace folders) |
 | `DELETE /api/departments/{id}` | Delete department (fails if agents exist; keeps files) |
+| `POST /api/departments/{id}/email` | Provision Gmail sending (address + Google app password) |
+| `DELETE /api/departments/{id}/email` | Remove email sending (messages are kept) |
 | `GET /api/agents` | List agents |
 | `POST /api/agents` | Create agent |
 | `POST /api/agents/{id}/trigger` | Manual run |
@@ -84,6 +86,9 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `POST /api/claude/conversations` | Create a chat tab |
 | `POST /api/claude/conversations/{id}/messages` | Send a prompt in a tab |
 | `POST /api/claude/conversations/{id}/archive` | Hide a tab (messages stay in the database) |
+| `GET /api/whatsapp/conversations` | Operator WhatsApp inbox |
+| `GET /api/emails` | Operator email log (`?agent_id=&address=&subject=&content=`) |
+| `PATCH /api/emails/{id}` | Edit a stored email or set `sending_status` (`pending` / `canceled` / `sent` / `fail`) |
 | `GET/POST/PUT/DELETE /api/files` | Workspace file CRUD (files only) |
 
 All mutating API calls use `Content-Type: application/json`.
@@ -113,3 +118,7 @@ All mutating API calls use `Content-Type: application/json`.
 - `CLAUDE_CLI_ARGS` — JSON array of extra Claude CLI flags
 - `TIMEOUT_SIGTERM_GRACE_SECONDS` — seconds after timeout before SIGTERM (default 300)
 - `TIMEOUT_SIGKILL_GRACE_SECONDS` — seconds after timeout before SIGKILL (default 600)
+- `EMAIL_SEND_INTERVAL_SECONDS` — how often pending agent emails are retried (default 300)
+- `EMAIL_SEND_GIVE_UP_SECONDS` — when a still-pending email is marked `fail` (default 86400)
+
+MCP email tools (`send_email`, `list_emails`) require the agent's department to be provisioned with a Gmail address and Google app password (`POST /api/departments/{id}/email`). Every queued message is stored in `system_email_messages` (agents cannot read that table). The backend sends on a timer and immediately when a new message is queued.
