@@ -93,7 +93,7 @@ export function buildAgentWritePayload(values: AgentWritePayload): AgentWritePay
 
 export type AgentRun = {
   id: number;
-  agent_id: number;
+  agent_id: number | null;
   agent_name?: string;
   status: string;
   trigger_source: string;
@@ -130,7 +130,7 @@ export type ClaudeMessage = {
 export type ClaudeConversation = {
   id: number;
   title: string;
-  agent_id: number;
+  agent_id: number | null;
   agent_name: string | null;
   agent_model: string | null;
   agent_enabled: boolean;
@@ -153,7 +153,7 @@ export type WhatsAppMessage = {
 
 export type WhatsAppConversation = {
   id: number;
-  agent_id: number;
+  agent_id: number | null;
   agent_name: string | null;
   department: string | null;
   from_number: string;
@@ -169,7 +169,7 @@ export type EmailContentType = "html" | "plain";
 
 export type EmailMessage = {
   id: number;
-  agent_id: number;
+  agent_id: number | null;
   agent_name: string | null;
   department: string | null;
   from_email: string;

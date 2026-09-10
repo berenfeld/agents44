@@ -203,6 +203,7 @@ def queue_agent_email(
 
     row = SystemEmailMessage(
         agent_id=agent.id,
+        agent_name=agent.name,
         from_email=from_email,
         subject=subject_text,
         recipients=to_list,

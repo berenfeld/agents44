@@ -642,7 +642,7 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         run = db.session.get(SystemAgentRun, run_id)
         if not run:
             return
-        agent = db.session.get(SystemAgent, run.agent_id)
+        agent = db.session.get(SystemAgent, run.agent_id) if run.agent_id is not None else None
         log_path: Path | None = None
         if not agent:
             run.status = RunStatus.failed
@@ -838,7 +838,7 @@ def _fail_run_from_worker(run_id: int, detail: str | None = None) -> None:
         run = db.session.get(SystemAgentRun, run_id)
         if not run or run.status != RunStatus.running:
             return
-        agent = db.session.get(SystemAgent, run.agent_id)
+        agent = db.session.get(SystemAgent, run.agent_id) if run.agent_id is not None else None
         run.status = RunStatus.failed
         run.error_message = RUN_FAILED_MESSAGE
         run.finished_at = datetime.now(timezone.utc)
@@ -903,6 +903,7 @@ def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None)
     pending_exists = _is_busy()
     run = SystemAgentRun(
         agent_id=agent.id,
+        agent_name=agent.name,
         status=RunStatus.pending if pending_exists else RunStatus.running,
         trigger_source=source,
         model=agent.model,

@@ -145,7 +145,7 @@ export default function ClaudePage() {
       return res.data;
     }
     setConversation(res.data);
-    setAgentId(res.data.agent_id);
+    setAgentId(res.data.agent_id ?? "");
     setTabs((current) => {
       if (res.data.archived_at) {
         return current.filter((tab) => tab.id !== res.data.id);
@@ -256,7 +256,7 @@ export default function ClaudePage() {
       setConversation(res.data);
       setTabs((current) => current.map((tab) => (tab.id === res.data.id ? { ...tab, ...res.data, messages: undefined } : tab)));
     } catch (err) {
-      setAgentId(conversation.agent_id);
+      setAgentId(conversation.agent_id ?? "");
       setNotice({ title: "Could not change agent", message: userFacingApiError(err) });
     } finally {
       setChangingAgent(false);
@@ -366,7 +366,10 @@ export default function ClaudePage() {
                 }
               }}
             >
-              {agents.length === 0 ? <option value="">No agents</option> : null}
+              {agentId === "" ? (
+                <option value="">{conversation?.agent_name ? `${conversation.agent_name} (deleted)` : "No agent"}</option>
+              ) : null}
+              {agents.length === 0 && agentId !== "" ? <option value="">No agents</option> : null}
               {agents.map((agent) => (
                 <option key={agent.id} value={agent.id}>
                   {agent.name}
@@ -579,16 +582,26 @@ export default function ClaudePage() {
                 {archived.map((row) => (
                   <tr key={row.id} className="border-t">
                     <td className="px-3 py-2 font-medium">{row.title}</td>
-                    <td className="px-3 py-2">{row.agent_name ?? "-"}</td>
+                    <td className="px-3 py-2">
+                      {row.agent_id == null
+                        ? row.agent_name
+                          ? `${row.agent_name} (deleted)`
+                          : "—"
+                        : (row.agent_name ?? "-")}
+                    </td>
                     <td className="px-3 py-2">{formatDate(row.archived_at)}</td>
                     <td className="px-3 py-2">
-                      <Button
-                        variant="outline"
-                        disabled={restoringId === row.id}
-                        onClick={() => void restoreConversation(row)}
-                      >
-                        {restoringId === row.id ? "Restoring..." : "Restore"}
-                      </Button>
+                      {row.agent_id == null ? (
+                        <span className="text-sm text-slate-500">Agent deleted</span>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          disabled={restoringId === row.id}
+                          onClick={() => void restoreConversation(row)}
+                        >
+                          {restoringId === row.id ? "Restoring..." : "Restore"}
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}

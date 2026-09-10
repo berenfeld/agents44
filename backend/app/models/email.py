@@ -49,7 +49,8 @@ class SystemEmailMessage(db.Model):
     __tablename__ = "system_email_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    agent_id: Mapped[int] = mapped_column(ForeignKey("system_agents.id"), nullable=False, index=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("system_agents.id"), nullable=True, index=True)
+    agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     from_email: Mapped[str] = mapped_column(String(254), nullable=False, index=True)
     subject: Mapped[str] = mapped_column(String(998), nullable=False, default="")
     recipients: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -84,13 +85,13 @@ class SystemEmailMessage(db.Model):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    agent: Mapped["SystemAgent"] = relationship()
+    agent: Mapped["SystemAgent | None"] = relationship()
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "agent_id": self.agent_id,
-            "agent_name": self.agent.name if self.agent else None,
+            "agent_name": self.agent.name if self.agent else self.agent_name,
             "department": self.agent.department if self.agent else None,
             "from_email": self.from_email,
             "subject": self.subject,

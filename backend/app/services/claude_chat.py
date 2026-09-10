@@ -274,6 +274,9 @@ def _execute_chat(assistant_message_id: int) -> None:
         if not conversation:
             _mark_message_failed(message, "Conversation not found")
             return
+        if conversation.agent_id is None:
+            _mark_message_failed(message, "Agent not found")
+            return
         agent = db.session.get(SystemAgent, conversation.agent_id)
         if not agent:
             _mark_message_failed(message, "Agent not found")
@@ -465,6 +468,7 @@ def create_conversation(agent_id: int, created_by: str | None, title: str | None
     conversation = SystemClaudeConversation(
         title=(title or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
         agent_id=agent.id,
+        agent_name=agent.name,
         created_by=created_by,
     )
     db.session.add(conversation)
@@ -483,6 +487,8 @@ def archive_conversation(conversation: SystemClaudeConversation) -> SystemClaude
 def unarchive_conversation(conversation: SystemClaudeConversation) -> SystemClaudeConversation:
     if conversation.archived_at is None:
         raise APIClientError("Conversation is not archived", 400)
+    if conversation.agent_id is None:
+        raise APIClientError("This conversation's agent was deleted", 400)
     conversation.archived_at = None
     conversation.updated_at = datetime.now(timezone.utc)
     return conversation
@@ -492,6 +498,8 @@ def send_message(conversation: SystemClaudeConversation, content: str) -> System
     _ensure_worker()
     if conversation.archived_at is not None:
         raise APIClientError("Conversation is archived", 400)
+    if conversation.agent_id is None:
+        raise APIClientError("This conversation's agent was deleted", 400)
     agent = db.session.get(SystemAgent, conversation.agent_id)
     if not agent:
         raise APIClientError("Agent not found", 404)

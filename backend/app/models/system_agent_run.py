@@ -17,7 +17,8 @@ class SystemAgentRun(db.Model):
     __tablename__ = "system_agents_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    agent_id: Mapped[int] = mapped_column(ForeignKey("system_agents.id"), nullable=False, index=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("system_agents.id"), nullable=True, index=True)
+    agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[RunStatus] = mapped_column(Enum(RunStatus), nullable=False, default=RunStatus.pending)
     trigger_source: Mapped[TriggerSource] = mapped_column(Enum(TriggerSource), nullable=False)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -31,14 +32,14 @@ class SystemAgentRun(db.Model):
     log_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    agent: Mapped["SystemAgent"] = relationship(back_populates="runs")
+    agent: Mapped["SystemAgent | None"] = relationship(back_populates="runs")
 
     def to_dict(self) -> dict:
         prompt_preview = self._read_prompt_preview()
         return {
             "id": self.id,
             "agent_id": self.agent_id,
-            "agent_name": self.agent.name if self.agent else None,
+            "agent_name": self.agent.name if self.agent else self.agent_name,
             "status": self.status.value,
             "trigger_source": self.trigger_source.value,
             "model": self.model,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Agent, api, buildAgentWritePayload, Department, ModelsResponse } from "@/api/client";
+import { Agent, api, buildAgentWritePayload, Department, ModelsResponse, userFacingApiError } from "@/api/client";
 import { AgentDetailSummary } from "@/components/agents/AgentDetailSummary";
 import { AgentFormDialog } from "@/components/agents/AgentFormDialog";
 import { AgentRunStateTag } from "@/components/agents/AgentRunningTag";
@@ -12,7 +12,7 @@ import {
 } from "@/components/agents/AgentInlineCells";
 import { formatTimeoutSeconds, parseTimeoutInput } from "@/lib/timeout";
 import { describeTimeoutChangeImpact } from "@/lib/run-timeout";
-import { ConfirmModal } from "@/components/ui/modal";
+import { ConfirmModal, NoticeModal } from "@/components/ui/modal";
 import { SortableTh } from "@/components/ui/sortable-table";
 import { Button } from "@/components/ui/primitives";
 import { getCrontabError } from "@/lib/crontab";
@@ -39,6 +39,9 @@ export default function AgentsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [deleteAgent, setDeleteAgent] = useState<Agent | null>(null);
   const [triggerAgent, setTriggerAgent] = useState<Agent | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [draftCrond, setDraftCrond] = useState<Record<number, string>>({});
   const [draftTimeout, setDraftTimeout] = useState<Record<number, string>>({});
   const [pendingTimeoutChange, setPendingTimeoutChange] = useState<{
@@ -135,8 +138,14 @@ export default function AgentsPage() {
     agent: Agent,
     patch: Partial<Pick<Agent, "model" | "enabled" | "crond" | "timeout_seconds">>,
   ) => {
-    await api.put(`/agents/${agent.id}`, buildAgentWritePayload({ ...agent, ...patch }));
-    await load();
+    try {
+      await api.put(`/agents/${agent.id}`, buildAgentWritePayload({ ...agent, ...patch }));
+      await load();
+      return true;
+    } catch (err) {
+      setNotice({ title: "Could not update agent", message: userFacingApiError(err) });
+      return false;
+    }
   };
 
   const saveCrond = async (agent: Agent) => {
@@ -144,7 +153,10 @@ export default function AgentsPage() {
     if (getCrontabError(draft)) return;
     const normalized = draft.trim() || null;
     if (normalized === (agent.crond || null)) return;
-    await patchAgent(agent, { crond: normalized });
+    const ok = await patchAgent(agent, { crond: normalized });
+    if (!ok) {
+      setDraftCrond((prev) => ({ ...prev, [agent.id]: agent.crond || "" }));
+    }
   };
 
   const saveTimeout = async (agent: Agent) => {
@@ -162,13 +174,21 @@ export default function AgentsPage() {
       setPendingTimeoutChange({ agent, newTimeoutSeconds: seconds });
       return;
     }
-    await patchAgent(agent, { timeout_seconds: seconds });
+    const ok = await patchAgent(agent, { timeout_seconds: seconds });
+    if (!ok) {
+      revertTimeout(agent);
+    }
   };
 
   const confirmTimeoutChange = async () => {
     if (!pendingTimeoutChange) return;
     const { agent, newTimeoutSeconds } = pendingTimeoutChange;
-    await patchAgent(agent, { timeout_seconds: newTimeoutSeconds });
+    const ok = await patchAgent(agent, { timeout_seconds: newTimeoutSeconds });
+    if (ok) {
+      setPendingTimeoutChange(null);
+      return;
+    }
+    revertTimeout(agent);
     setPendingTimeoutChange(null);
   };
 
@@ -280,7 +300,7 @@ export default function AgentsPage() {
                         value={agent.model}
                         models={models}
                         onChange={(model) => {
-                          if (model !== agent.model) patchAgent(agent, { model }).catch(console.error);
+                          if (model !== agent.model) void patchAgent(agent, { model });
                         }}
                       />
                     </td>
@@ -290,7 +310,7 @@ export default function AgentsPage() {
                         onChange={(value) => {
                           setDraftCrond((prev) => ({ ...prev, [agent.id]: value }));
                         }}
-                        onCommit={() => saveCrond(agent).catch(console.error)}
+                        onCommit={() => void saveCrond(agent)}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -299,7 +319,7 @@ export default function AgentsPage() {
                         onChange={(value) => {
                           setDraftTimeout((prev) => ({ ...prev, [agent.id]: value }));
                         }}
-                        onCommit={() => saveTimeout(agent).catch(console.error)}
+                        onCommit={() => void saveTimeout(agent)}
                         onRevert={() => revertTimeout(agent)}
                       />
                     </td>
@@ -307,7 +327,7 @@ export default function AgentsPage() {
                       <EnabledToggle
                         value={agent.enabled}
                         onChange={(enabled) => {
-                          if (enabled !== agent.enabled) patchAgent(agent, { enabled }).catch(console.error);
+                          if (enabled !== agent.enabled) void patchAgent(agent, { enabled });
                         }}
                       />
                     </td>
@@ -342,7 +362,7 @@ export default function AgentsPage() {
                       value={agent.model}
                       models={models}
                       onChange={(model) => {
-                        if (model !== agent.model) patchAgent(agent, { model }).catch(console.error);
+                        if (model !== agent.model) void patchAgent(agent, { model });
                       }}
                     />
                   </DataCardField>
@@ -352,7 +372,7 @@ export default function AgentsPage() {
                       onChange={(value) => {
                         setDraftCrond((prev) => ({ ...prev, [agent.id]: value }));
                       }}
-                      onCommit={() => saveCrond(agent).catch(console.error)}
+                      onCommit={() => void saveCrond(agent)}
                     />
                   </DataCardField>
                   <DataCardField label="Timeout">
@@ -361,7 +381,7 @@ export default function AgentsPage() {
                       onChange={(value) => {
                         setDraftTimeout((prev) => ({ ...prev, [agent.id]: value }));
                       }}
-                      onCommit={() => saveTimeout(agent).catch(console.error)}
+                      onCommit={() => void saveTimeout(agent)}
                       onRevert={() => revertTimeout(agent)}
                     />
                   </DataCardField>
@@ -369,7 +389,7 @@ export default function AgentsPage() {
                     <EnabledToggle
                       value={agent.enabled}
                       onChange={(enabled) => {
-                        if (enabled !== agent.enabled) patchAgent(agent, { enabled }).catch(console.error);
+                        if (enabled !== agent.enabled) void patchAgent(agent, { enabled });
                       }}
                     />
                   </DataCardField>
@@ -390,8 +410,14 @@ export default function AgentsPage() {
         open={formOpen}
         onOpenChange={setFormOpen}
         onSubmit={async (values) => {
-          await api.post("/agents", values);
-          await load();
+          try {
+            await api.post("/agents", values);
+            await load();
+            setNotice({ title: "Agent created", message: `Created ${values.name}.` });
+          } catch (err) {
+            setNotice({ title: "Could not create agent", message: userFacingApiError(err) });
+            throw err;
+          }
         }}
       />
 
@@ -420,31 +446,73 @@ export default function AgentsPage() {
 
       <ConfirmModal
         open={!!deleteAgent}
-        onOpenChange={(open) => !open && setDeleteAgent(null)}
+        onOpenChange={(open) => !open && !deleting && setDeleteAgent(null)}
         title="Delete agent?"
-        confirmLabel="Delete"
+        confirmLabel={deleting ? "Deleting..." : "Delete"}
         destructive
-        description={deleteAgent ? <AgentDetailSummary agent={deleteAgent} /> : null}
+        busy={deleting}
+        description={
+          deleteAgent ? (
+            <div className="space-y-3">
+              <AgentDetailSummary agent={deleteAgent} />
+              <p>
+                Claude conversations will be archived and kept. Emails, WhatsApp threads, and run history stay in the
+                database.
+              </p>
+            </div>
+          ) : null
+        }
         onConfirm={async () => {
           if (!deleteAgent) return;
-          await api.delete(`/agents/${deleteAgent.id}`);
-          setDeleteAgent(null);
-          await load();
+          const target = deleteAgent;
+          setDeleting(true);
+          try {
+            await api.delete(`/agents/${target.id}`);
+            setDeleteAgent(null);
+            await load();
+            setNotice({
+              title: "Agent deleted",
+              message: `Deleted ${target.name}. Claude conversations were archived.`,
+            });
+          } catch (err) {
+            setDeleteAgent(null);
+            setNotice({ title: "Could not delete agent", message: userFacingApiError(err) });
+          } finally {
+            setDeleting(false);
+          }
         }}
       />
 
       <ConfirmModal
         open={!!triggerAgent}
-        onOpenChange={(open) => !open && setTriggerAgent(null)}
+        onOpenChange={(open) => !open && !triggering && setTriggerAgent(null)}
         title="Trigger agent now?"
-        confirmLabel="Trigger"
+        confirmLabel={triggering ? "Triggering..." : "Trigger"}
+        busy={triggering}
         description={triggerAgent ? <AgentDetailSummary agent={triggerAgent} /> : null}
         onConfirm={async () => {
           if (!triggerAgent) return;
-          await api.post(`/agents/${triggerAgent.id}/trigger`, {});
-          setTriggerAgent(null);
-          await refreshRunningStatus();
+          const target = triggerAgent;
+          setTriggering(true);
+          try {
+            await api.post(`/agents/${target.id}/trigger`, {});
+            setTriggerAgent(null);
+            await refreshRunningStatus();
+            setNotice({ title: "Agent triggered", message: `Started a run for ${target.name}.` });
+          } catch (err) {
+            setTriggerAgent(null);
+            setNotice({ title: "Could not trigger agent", message: userFacingApiError(err) });
+          } finally {
+            setTriggering(false);
+          }
         }}
+      />
+
+      <NoticeModal
+        open={!!notice}
+        onOpenChange={(open) => !open && setNotice(null)}
+        title={notice?.title || "Notice"}
+        description={notice ? <p>{notice.message}</p> : null}
       />
     </div>
   );

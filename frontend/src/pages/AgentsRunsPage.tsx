@@ -35,6 +35,17 @@ function isRunningRun(status: string) {
   return status === "running";
 }
 
+function runAgentLabel(run: AgentRun): string {
+  const name = run.agent_name?.trim();
+  if (name) {
+    return run.agent_id == null ? `${name} (deleted)` : name;
+  }
+  if (run.agent_id != null) {
+    return `Agent #${run.agent_id}`;
+  }
+  return "—";
+}
+
 function RefreshIcon({ className }: { className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
@@ -143,7 +154,7 @@ export default function AgentsRunsPage() {
   const sortAccessors = useMemo(
     () => ({
       id: (run: AgentRun) => run.id,
-      agent_name: (run: AgentRun) => run.agent_name || String(run.agent_id),
+      agent_name: (run: AgentRun) => runAgentLabel(run),
       status: (run: AgentRun) => run.status,
       model: (run: AgentRun) => run.model ?? "",
       tokens: (run: AgentRun) => runTokensTotal(run.tokens_in, run.tokens_out),
@@ -158,15 +169,20 @@ export default function AgentsRunsPage() {
   );
 
   const agentOptions = useMemo(() => {
-    const map = new Map<number, string>();
+    const map = new Map<string, string>();
     for (const run of runs) {
-      map.set(run.agent_id, run.agent_name || String(run.agent_id));
+      const key = run.agent_id != null ? String(run.agent_id) : `deleted:${run.agent_name ?? ""}`;
+      map.set(key, runAgentLabel(run));
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [runs]);
 
   const filteredRuns = useMemo(() => {
     if (!agentFilter) return runs;
+    if (agentFilter.startsWith("deleted:")) {
+      const name = agentFilter.slice("deleted:".length);
+      return runs.filter((run) => run.agent_id == null && (run.agent_name || "") === name);
+    }
     const agentId = Number(agentFilter);
     if (Number.isNaN(agentId)) return runs;
     return runs.filter((run) => run.agent_id === agentId);
@@ -480,7 +496,7 @@ export default function AgentsRunsPage() {
             {sorted.map((run) => (
               <tr key={run.id} className="border-t">
                 <td className="px-4 py-2">{run.id}</td>
-                <td className="px-4 py-2">{run.agent_name || run.agent_id}</td>
+                <td className="px-4 py-2">{runAgentLabel(run)}</td>
                 <td className="px-4 py-2">
                   <span className="inline-flex items-center gap-1">
                     <RunStatusBadge status={run.status} />
@@ -554,7 +570,7 @@ export default function AgentsRunsPage() {
         {sorted.map((run) => (
           <DataCard key={run.id}>
             <DataCardTitle>
-              Run #{run.id} · {run.agent_name || run.agent_id}
+              Run #{run.id} · {runAgentLabel(run)}
             </DataCardTitle>
             <dl>
               <DataCardField label="Status">
@@ -669,7 +685,7 @@ export default function AgentsRunsPage() {
         description={
           stopRun ? (
             <p>
-              Send SIGTERM to run <strong>#{stopRun.id}</strong> ({stopRun.agent_name || stopRun.agent_id})? The
+              Send SIGTERM to run <strong>#{stopRun.id}</strong> ({runAgentLabel(stopRun)})? The
               agent may finish gracefully if it writes <code>summary.md</code>, or the run may fail.
             </p>
           ) : null
@@ -686,7 +702,7 @@ export default function AgentsRunsPage() {
         description={
           deleteRun ? (
             <p>
-              Delete run <strong>#{deleteRun.id}</strong> ({deleteRun.agent_name || deleteRun.agent_id}) from
+              Delete run <strong>#{deleteRun.id}</strong> ({runAgentLabel(deleteRun)}) from
               the list? Workspace run files are kept.
             </p>
           ) : null

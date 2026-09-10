@@ -24,7 +24,7 @@ function toRunNotificationState(run: AgentRun): RunNotificationState {
   return {
     id: run.id,
     status: run.status,
-    agentName: run.agent_name?.trim() || `Agent #${run.agent_id}`,
+    agentName: run.agent_name?.trim() || (run.agent_id != null ? `Agent #${run.agent_id}` : "Agent"),
     errorMessage: run.error_message,
   };
 }

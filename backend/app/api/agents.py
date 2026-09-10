@@ -61,7 +61,7 @@ def _require_department(name: str) -> str:
 
 def _runs_by_agent_status(status: RunStatus) -> dict[int, SystemAgentRun]:
     runs = SystemAgentRun.query.filter_by(status=status).order_by(SystemAgentRun.id.asc()).all()
-    return {run.agent_id: run for run in runs}
+    return {run.agent_id: run for run in runs if run.agent_id is not None}
 
 
 def _active_run_dict(run: SystemAgentRun, agent: SystemAgent) -> dict:
@@ -179,6 +179,26 @@ def update_agent(agent_id: int):
     return jsonify(agent.to_dict())
 
 
+def _detach_agent_history(agent: SystemAgent) -> None:
+    now = datetime.now(timezone.utc)
+    conversations = SystemClaudeConversation.query.filter_by(agent_id=agent.id).all()
+    for conversation in conversations:
+        if conversation.archived_at is None:
+            conversation.archived_at = now
+            conversation.updated_at = now
+        conversation.agent_name = agent.name
+        conversation.agent_id = None
+    for message in SystemEmailMessage.query.filter_by(agent_id=agent.id).all():
+        message.agent_name = agent.name
+        message.agent_id = None
+    for thread in SystemWhatsAppConversation.query.filter_by(agent_id=agent.id).all():
+        thread.agent_name = agent.name
+        thread.agent_id = None
+    for run in SystemAgentRun.query.filter_by(agent_id=agent.id).all():
+        run.agent_name = agent.name
+        run.agent_id = None
+
+
 @agents_bp.delete("/<int:agent_id>")
 @api_endpoint
 @login_required
@@ -186,12 +206,13 @@ def delete_agent(agent_id: int):
     agent = db.session.get(SystemAgent, agent_id)
     if not agent:
         raise APIClientError("Not found", 404)
-    if SystemClaudeConversation.query.filter_by(agent_id=agent_id).first():
-        raise APIClientError("Agent has Claude conversations and cannot be deleted", 400)
-    if SystemWhatsAppConversation.query.filter_by(agent_id=agent_id).first():
-        raise APIClientError("Agent has WhatsApp conversations and cannot be deleted", 400)
-    if SystemEmailMessage.query.filter_by(agent_id=agent_id).first():
-        raise APIClientError("Agent has email messages and cannot be deleted", 400)
+    if SystemAgentRun.query.filter(
+        SystemAgentRun.agent_id == agent_id,
+        SystemAgentRun.status.in_([RunStatus.running, RunStatus.pending]),
+    ).first():
+        raise APIClientError("Agent is running and cannot be deleted", 400)
+
+    _detach_agent_history(agent)
     conn = db.session.connection()
     drop_agent_db_access(conn, agent_name=agent.name, db_user=agent.db_user)
     db.session.delete(agent)

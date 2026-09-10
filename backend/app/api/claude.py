@@ -130,6 +130,7 @@ def update_conversation(conversation_id: int):
         if conversation_is_busy(conversation.id):
             raise APIClientError("Claude is still responding", 409)
         conversation.agent_id = agent.id
+        conversation.agent_name = agent.name
     if "title" in data:
         conversation.title = data["title"].strip() or DEFAULT_CONVERSATION_TITLE
     db.session.flush()

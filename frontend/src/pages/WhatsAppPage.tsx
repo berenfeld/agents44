@@ -293,7 +293,7 @@ export default function WhatsAppPage() {
                             </span>
                           </div>
                           <div className={cn("truncate text-xs", active ? "text-slate-300" : "text-slate-500")}>
-                            {row.department || "—"} · {row.agent_name || `agent ${row.agent_id}`}
+                            {row.department || "—"} · {row.agent_id == null ? (row.agent_name ? `${row.agent_name} (deleted)` : "—") : (row.agent_name || `agent ${row.agent_id}`)}
                           </div>
                           <div className={cn("truncate text-xs", active ? "text-slate-300" : "text-slate-500")}>
                             {row.last_message_preview || "(no messages)"}
@@ -329,7 +329,7 @@ export default function WhatsAppPage() {
                   {conversation.from_number} → {conversation.to_number}
                 </p>
                 <p className="text-xs text-slate-500">
-                  {conversation.department || "—"} · {conversation.agent_name || `agent ${conversation.agent_id}`}
+                  {conversation.department || "—"} · {conversation.agent_id == null ? (conversation.agent_name ? `${conversation.agent_name} (deleted)` : "—") : (conversation.agent_name || `agent ${conversation.agent_id}`)}
                 </p>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-4">

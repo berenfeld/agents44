@@ -454,7 +454,7 @@ export default function EmailsPage() {
                   <tr key={row.id} className="border-t align-top">
                     <td className="px-4 py-2">{row.id}</td>
                     <td className="px-4 py-2 whitespace-nowrap">{formatDate(row.created_at)}</td>
-                    <td className="px-4 py-2">{row.agent_name || `agent ${row.agent_id}`}</td>
+                    <td className="px-4 py-2">{row.agent_id == null ? (row.agent_name ? `${row.agent_name} (deleted)` : "—") : (row.agent_name || `agent ${row.agent_id}`)}</td>
                     <td className="px-4 py-2">{row.from_email}</td>
                     <td className="max-w-[12rem] px-4 py-2 break-words">{formatAddressList(row.recipients)}</td>
                     <td className="max-w-[14rem] px-4 py-2 break-words">{row.subject}</td>
@@ -488,7 +488,7 @@ export default function EmailsPage() {
                 </DataCardTitle>
                 <dl>
                   <DataCardField label="Created">{formatDate(row.created_at)}</DataCardField>
-                  <DataCardField label="Agent">{row.agent_name || `agent ${row.agent_id}`}</DataCardField>
+                  <DataCardField label="Agent">{row.agent_id == null ? (row.agent_name ? `${row.agent_name} (deleted)` : "—") : (row.agent_name || `agent ${row.agent_id}`)}</DataCardField>
                   <DataCardField label="From">{row.from_email}</DataCardField>
                   <DataCardField label="To">{formatAddressList(row.recipients)}</DataCardField>
                   <DataCardField label="Cc">{formatAddressList(row.cc)}</DataCardField>

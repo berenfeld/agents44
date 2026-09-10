@@ -32,7 +32,8 @@ class SystemClaudeConversation(db.Model):
     title: Mapped[str] = mapped_column(
         String(MAX_CONVERSATION_TITLE_LEN), nullable=False, default=DEFAULT_CONVERSATION_TITLE
     )
-    agent_id: Mapped[int] = mapped_column(ForeignKey("system_agents.id"), nullable=False, index=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("system_agents.id"), nullable=True, index=True)
+    agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -40,7 +41,7 @@ class SystemClaudeConversation(db.Model):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    agent: Mapped["SystemAgent"] = relationship()
+    agent: Mapped["SystemAgent | None"] = relationship()
     messages: Mapped[list["SystemClaudeMessage"]] = relationship(
         back_populates="conversation",
         order_by="SystemClaudeMessage.id",
@@ -53,7 +54,7 @@ class SystemClaudeConversation(db.Model):
             "id": self.id,
             "title": self.title,
             "agent_id": self.agent_id,
-            "agent_name": self.agent.name if self.agent else None,
+            "agent_name": self.agent.name if self.agent else self.agent_name,
             "agent_model": self.agent.model if self.agent else None,
             "agent_enabled": self.agent.enabled if self.agent else False,
             "archived_at": self.archived_at.isoformat() if self.archived_at else None,

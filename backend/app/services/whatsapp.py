@@ -211,11 +211,16 @@ def _get_or_create_conversation(
         to_number=to_number,
     ).first()
     if conversation:
+        if conversation.agent_id is None:
+            conversation.agent_id = agent.id
+            conversation.agent_name = agent.name
+            return conversation
         if conversation.agent_id != agent.id:
             raise APIClientError("This WhatsApp number already belongs to another agent", 400)
         return conversation
     conversation = SystemWhatsAppConversation(
         agent_id=agent.id,
+        agent_name=agent.name,
         from_number=from_number,
         to_number=to_number,
     )
@@ -395,7 +400,7 @@ def ingest_wati_webhook(secret: str, payload: dict) -> dict:
     db.session.add(message)
     db.session.flush()
 
-    agent = db.session.get(SystemAgent, conversation.agent_id)
+    agent = db.session.get(SystemAgent, conversation.agent_id) if conversation.agent_id else None
     trigger_payload = {
         "whatsapp": {
             "conversation_id": conversation.id,
