@@ -46,8 +46,8 @@ class WhatsAppProvisionSchema(Schema):
         unknown = EXCLUDE
 
     from_number = fields.Str(required=True, validate=validate.Length(min=1, max=32))
-    wati_api_endpoint = fields.Str(required=True, validate=validate.Length(min=1, max=256))
-    wati_api_token = fields.Str(required=True, validate=validate.Length(min=1, max=2048))
+    phone_number_id = fields.Str(required=True, validate=validate.Length(min=1, max=64))
+    access_token = fields.Str(required=True, validate=validate.Length(min=1, max=4096))
 
 
 def _department_or_404(department_id: int) -> SystemDepartment:
@@ -99,11 +99,16 @@ def provision_department_whatsapp_route(department_id: int):
     provision_department_whatsapp(
         row,
         from_number=data["from_number"],
-        wati_api_endpoint=data["wati_api_endpoint"],
-        wati_api_token=data["wati_api_token"],
+        phone_number_id=data["phone_number_id"],
+        access_token=data["access_token"],
     )
-    webhook_url = webhook_public_url(row.wati_webhook_secret or "")
-    return jsonify(row.to_dict(webhook_url=webhook_url)), 201
+    webhook_url = webhook_public_url(row.whatsapp_webhook_secret or "")
+    return jsonify(
+        row.to_dict(
+            webhook_url=webhook_url,
+            webhook_verify_token=row.whatsapp_verify_token,
+        )
+    ), 201
 
 
 @departments_bp.delete("/<int:department_id>/whatsapp")

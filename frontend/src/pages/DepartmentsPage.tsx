@@ -25,8 +25,8 @@ export default function DepartmentsPage() {
   const [emailProvisionTarget, setEmailProvisionTarget] = useState<Department | null>(null);
   const [emailUnprovisionTarget, setEmailUnprovisionTarget] = useState<Department | null>(null);
   const [fromNumber, setFromNumber] = useState("");
-  const [watiEndpoint, setWatiEndpoint] = useState("");
-  const [watiToken, setWatiToken] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
   const [emailAddress, setEmailAddress] = useState("");
   const [appPassword, setAppPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -68,8 +68,8 @@ export default function DepartmentsPage() {
 
   const openProvision = (department: Department) => {
     setFromNumber("");
-    setWatiEndpoint("");
-    setWatiToken("");
+    setPhoneNumberId("");
+    setAccessToken("");
     setError(null);
     setProvisionTarget(department);
   };
@@ -172,7 +172,7 @@ export default function DepartmentsPage() {
                     <td className="px-4 py-2">{agentCount(department.name)}</td>
                     <td className="px-4 py-2">
                       <div className="flex flex-wrap gap-2">
-                        {department.wati_configured ? (
+                        {department.whatsapp_configured ? (
                           <Button variant="outline" onClick={() => setUnprovisionTarget(department)}>
                             Unprovision WhatsApp
                           </Button>
@@ -216,7 +216,7 @@ export default function DepartmentsPage() {
                   <DataCardField label="Agents">{agentCount(department.name)}</DataCardField>
                 </dl>
                 <DataCardActions>
-                  {department.wati_configured ? (
+                  {department.whatsapp_configured ? (
                     <Button variant="outline" onClick={() => setUnprovisionTarget(department)}>
                       Unprovision WhatsApp
                     </Button>
@@ -266,8 +266,8 @@ export default function DepartmentsPage() {
             try {
               const updated = await api.post<Department>(`/departments/${provisionTarget.id}/whatsapp`, {
                 from_number: fromNumber,
-                wati_api_endpoint: watiEndpoint,
-                wati_api_token: watiToken,
+                phone_number_id: phoneNumberId,
+                access_token: accessToken,
               });
               replaceDepartment(updated.data);
               setProvisionTarget(null);
@@ -276,11 +276,17 @@ export default function DepartmentsPage() {
                 message: (
                   <div className="space-y-2">
                     <p>
-                      Paste this webhook URL in WATI (Connectors → Webhooks) and enable the message-received event
-                      only.
+                      In Meta for Developers, open the app → WhatsApp → Configuration → Webhook. Use this callback
+                      URL, the verify token below, and subscribe to the <strong>messages</strong> field. See{" "}
+                      <code>README.whatsapp.md</code>.
                     </p>
+                    <p className="text-xs font-medium text-slate-700">Callback URL</p>
                     <p className="break-all rounded border bg-slate-50 p-2 font-mono text-xs text-slate-800">
-                      {updated.data.wati_webhook_url}
+                      {updated.data.whatsapp_webhook_url}
+                    </p>
+                    <p className="text-xs font-medium text-slate-700">Verify token</p>
+                    <p className="break-all rounded border bg-slate-50 p-2 font-mono text-xs text-slate-800">
+                      {updated.data.whatsapp_verify_token}
                     </p>
                   </div>
                 ),
@@ -295,7 +301,8 @@ export default function DepartmentsPage() {
           }}
         >
           <p className="text-sm text-slate-600">
-            Provision WhatsApp for <strong>{provisionTarget?.name}</strong>.
+            Provision WhatsApp Cloud API for <strong>{provisionTarget?.name}</strong>. Use the Meta-verified number,
+            its phone number ID, and a Graph API access token.
           </p>
           <div>
             <Label htmlFor="whatsapp-from-number">Israeli mobile number</Label>
@@ -307,22 +314,22 @@ export default function DepartmentsPage() {
             />
           </div>
           <div>
-            <Label htmlFor="wati-endpoint">WATI API endpoint</Label>
+            <Label htmlFor="whatsapp-phone-number-id">Phone number ID</Label>
             <Input
-              id="wati-endpoint"
-              placeholder="https://live-server-xxxx.wati.io"
-              value={watiEndpoint}
-              onChange={(e) => setWatiEndpoint(e.target.value)}
+              id="whatsapp-phone-number-id"
+              placeholder="106540352242922"
+              value={phoneNumberId}
+              onChange={(e) => setPhoneNumberId(e.target.value)}
             />
           </div>
           <div>
-            <Label htmlFor="wati-token">WATI API token</Label>
+            <Label htmlFor="whatsapp-access-token">Meta Graph API access token</Label>
             <Input
-              id="wati-token"
+              id="whatsapp-access-token"
               type="password"
               autoComplete="off"
-              value={watiToken}
-              onChange={(e) => setWatiToken(e.target.value)}
+              value={accessToken}
+              onChange={(e) => setAccessToken(e.target.value)}
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -331,7 +338,7 @@ export default function DepartmentsPage() {
             </Button>
             <Button
               type="submit"
-              disabled={provisioning || !fromNumber.trim() || !watiEndpoint.trim() || !watiToken.trim()}
+              disabled={provisioning || !fromNumber.trim() || !phoneNumberId.trim() || !accessToken.trim()}
             >
               {provisioning ? "Provisioning..." : "Provision"}
             </Button>

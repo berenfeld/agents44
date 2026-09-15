@@ -83,7 +83,7 @@ class SystemWhatsAppMessage(db.Model):
         nullable=False,
     )
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    wati_message_id: Mapped[str | None] = mapped_column(String(256), nullable=True, unique=True)
+    whatsapp_message_id: Mapped[str | None] = mapped_column(String(256), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped["SystemWhatsAppConversation"] = relationship(back_populates="messages")
@@ -94,6 +94,6 @@ class SystemWhatsAppMessage(db.Model):
             "conversation_id": self.conversation_id,
             "direction": self.direction.value,
             "body": self.body,
-            "wati_message_id": self.wati_message_id,
+            "whatsapp_message_id": self.whatsapp_message_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -41,8 +41,9 @@ export type Department = {
   name: string;
   created_at: string | null;
   whatsapp_from_number: string | null;
-  wati_configured: boolean;
-  wati_webhook_url?: string;
+  whatsapp_configured: boolean;
+  whatsapp_webhook_url?: string;
+  whatsapp_verify_token?: string;
   email_address: string | null;
   email_configured: boolean;
 };
@@ -147,7 +148,7 @@ export type WhatsAppMessage = {
   conversation_id: number;
   direction: "inbound" | "outbound";
   body: string;
-  wati_message_id: string | null;
+  whatsapp_message_id: string | null;
   created_at: string | null;
 };
 

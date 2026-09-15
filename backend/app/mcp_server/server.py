@@ -128,15 +128,15 @@ def _build_mcp_server(port: int) -> FastMCP:
 
     @mcp.tool(
         description=(
-            "Send a WhatsApp session message from this department's provisioned number. "
+            "Send a WhatsApp session message from this department's provisioned Meta Cloud API number. "
             "Fails if the department is not provisioned for WhatsApp. "
             "Pass the client number in to_number (Israeli 05X... or international digits with country code) "
             "and the full message in message_text. "
             "To include a website link, put the full URL in message_text with the scheme, "
             "for example https://example.com/path. Put each URL on its own line after a short sentence. "
             "Do not use Markdown ([label](url)), HTML <a> tags, or a bare domain without https:// — "
-            "WhatsApp will not turn those into tappable links. "
-            "Website http/https links only; this tool does not send media or WhatsApp deep links."
+            "WhatsApp will not turn those into tappable links. Link previews are enabled. "
+            "Website http/https links only; this tool does not send media, templates, or WhatsApp deep links."
         ),
     )
     def send_whatsapp(to_number: str, message_text: str, ctx: Context = ...) -> dict:

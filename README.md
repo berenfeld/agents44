@@ -55,7 +55,7 @@ Or equivalently: `docker compose up --build`.
 
 ## Deploy to AWS
 
-See **[README.deployment.md](README.deployment.md)**. Coding conventions for agents: **[README.coding-guidelines.md](README.coding-guidelines.md)**.
+See **[README.deployment.md](README.deployment.md)**. Coding conventions for agents: **[README.coding-guidelines.md](README.coding-guidelines.md)**. WhatsApp Cloud API (Meta Graph token, not a BSP): **[README.whatsapp.md](README.whatsapp.md)**.
 
 GitHub Actions builds the same image on every push to `main` and pushes to Amazon ECR.
 
@@ -75,6 +75,8 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `GET /api/departments` | List departments |
 | `POST /api/departments` | Create department (creates workspace folders) |
 | `DELETE /api/departments/{id}` | Delete department (fails if agents exist; keeps files) |
+| `POST /api/departments/{id}/whatsapp` | Provision WhatsApp Cloud API (number, phone number ID, Graph token) |
+| `DELETE /api/departments/{id}/whatsapp` | Remove WhatsApp sending (conversations are kept) |
 | `POST /api/departments/{id}/email` | Provision Gmail sending (address + Google app password) |
 | `DELETE /api/departments/{id}/email` | Remove email sending (messages are kept) |
 | `GET /api/agents` | List agents |
@@ -122,3 +124,5 @@ All mutating API calls use `Content-Type: application/json`.
 - `EMAIL_SEND_GIVE_UP_SECONDS` — when a still-pending email is marked `fail` (default 86400)
 
 MCP email tools (`send_email`, `list_emails`) require the agent's department to be provisioned with a Gmail address and Google app password (`POST /api/departments/{id}/email`). Every queued message is stored in `system_email_messages` (agents cannot read that table). The backend sends on a timer and immediately when a new message is queued.
+
+WhatsApp Cloud API (`send_whatsapp`, `list_whatsapp_conversations`) requires the department to be provisioned with a Meta-verified number, phone number ID, and Graph API access token. See **[README.whatsapp.md](README.whatsapp.md)**.
