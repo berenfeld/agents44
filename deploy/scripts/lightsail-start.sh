@@ -92,11 +92,7 @@ ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${HOST_ANTHROPIC:-}}"
 ANTHROPIC_MISSING=0
 if [ -z "${ANTHROPIC_API_KEY}" ]; then
   ANTHROPIC_MISSING=1
-  echo "WARNING: ANTHROPIC_API_KEY is empty for instance ${NAME}" >&2
-  echo "         Container will start; agent runs and the model list will fail until you set it." >&2
-  echo "         Put the key in ${ENV_FILE} then re-run $0 ${NAME} ${PORT}" >&2
-  echo "         (or: $(dirname "$0")/set-env-var.sh ${ENV_FILE} ANTHROPIC_API_KEY '...')" >&2
-  echo "         Do not export the key in ~/.bashrc (it would be shared by every instance)." >&2
+  echo "WARNING: ANTHROPIC_API_KEY is not set — agent runs will fail until it is added to ${ENV_FILE}" >&2
 fi
 
 # Always refresh from host when provided
