@@ -1,40 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import CodeMirror from "@uiw/react-codemirror";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { EditorView } from "@codemirror/view";
-import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { api, userFacingApiError } from "@/api/client";
+import { FileEditorPane } from "@/components/files/FileEditorPane";
 import { Button, Input } from "@/components/ui/primitives";
 import { ConfirmModal, Modal, NoticeModal } from "@/components/ui/modal";
 import { PanelCard, SplitPanelLayout } from "@/components/ui/split-panel-layout";
+import {
+  fileName,
+  formatFileSize,
+  isEditable,
+  isPdfFile,
+  isProtectedWorkspacePath,
+  isUnderPath,
+  parentFolder,
+  readTextDirection,
+  writeTextDirection,
+  type FileEntry,
+  type PathResponse,
+  type TextDirection,
+} from "@/lib/workspace-files";
 import { cn } from "@/lib/utils";
 
-type FileEntry = {
-  path: string;
-  name: string;
-  is_dir: boolean;
-  size_bytes: number | null;
-  modified_at: string | null;
-};
-type PathResponse = {
-  path: string;
-  is_dir: boolean;
-  children?: FileEntry[];
-  content?: string;
-  size_bytes?: number | null;
-  modified_at?: string | null;
-};
-
 const FILES_ROUTE_PREFIX = "/agents_files";
-
-const editorAutoHeight = EditorView.theme({
-  "&": { height: "auto !important", width: "100%" },
-  ".cm-scroller": { overflow: "auto !important", height: "auto !important" },
-});
 
 function parseFilesUrl(pathname: string): string {
   if (!pathname.startsWith(FILES_ROUTE_PREFIX)) return "";
@@ -63,84 +50,6 @@ function filesQueryString(
   return qs ? `?${qs}` : "";
 }
 
-function isProtectedWorkspacePath(path: string): boolean {
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length === 2 && parts[1] === "input") return true;
-  if (parts.length === 3 && parts[2] === "input") return true;
-  if (parts.length === 3 && parts[1] === "input" && parts[2] === "MEMORY.md") return true;
-  if (parts.length === 4 && parts[2] === "input" && parts[3] === "MEMORY.md") return true;
-  return false;
-}
-
-function parentFolder(path: string): string {
-  if (!path.includes("/")) return "";
-  return path.split("/").slice(0, -1).join("/");
-}
-
-function isUnderPath(path: string, ancestor: string): boolean {
-  return path === ancestor || path.startsWith(`${ancestor}/`);
-}
-
-function fileName(path: string): string {
-  return path.split("/").pop() || path;
-}
-
-function extension(path: string) {
-  const name = fileName(path);
-  const lastDot = name.lastIndexOf(".");
-  if (lastDot <= 0) return "";
-  return name.slice(lastDot + 1).toLowerCase();
-}
-
-function isEditable(path: string) {
-  const ext = extension(path);
-  if (!ext) return true;
-  return ["txt", "json", "md", "markdown", "log"].includes(ext);
-}
-
-function isTextOrMarkdownFile(path: string) {
-  const ext = extension(path);
-  return !ext || ext === "txt" || ext === "md" || ext === "markdown";
-}
-
-type TextDirection = "ltr" | "rtl";
-
-const TEXT_DIRECTION_STORAGE_KEY = "agents44.agentFiles.textDirection";
-
-function readTextDirection(): TextDirection {
-  try {
-    return window.localStorage.getItem(TEXT_DIRECTION_STORAGE_KEY) === "rtl" ? "rtl" : "ltr";
-  } catch {
-    return "ltr";
-  }
-}
-
-function writeTextDirection(direction: TextDirection) {
-  try {
-    window.localStorage.setItem(TEXT_DIRECTION_STORAGE_KEY, direction);
-  } catch {
-    // Ignore storage failures (private mode, quota). The in-memory toggle still works.
-  }
-}
-
-function isPdfFile(path: string) {
-  return extension(path) === "pdf";
-}
-
-function fileRawUrl(path: string, download = false) {
-  const apiBase = String(import.meta.env.REACT_APP_API_URL || "/api").replace(/\/$/, "");
-  const params = new URLSearchParams({ path });
-  if (download) params.set("download", "1");
-  return `${apiBase}/files/raw?${params.toString()}`;
-}
-
-function formatFileSize(bytes: number | null | undefined): string {
-  if (bytes == null) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function formatCount(n: number, singular: string, plural: string): string {
   return `${n} ${n === 1 ? singular : plural}`;
 }
@@ -149,13 +58,6 @@ function formatFolderSummary(entries: FileEntry[]): string {
   const folders = entries.filter((entry) => entry.is_dir).length;
   const files = entries.length - folders;
   return `${formatCount(files, "file", "files")}, ${formatCount(folders, "folder", "folders")}`;
-}
-
-function formatModified(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString();
 }
 
 function PanelLeftIcon() {
@@ -190,50 +92,6 @@ function TrashIcon({ className }: { className?: string }) {
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
       <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
-  );
-}
-
-function DownloadIcon({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={cn("h-4 w-4", className)} aria-hidden="true">
-      <path d="M12 3v12M8 11l4 4 4-4M5 21h14" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function TextDirectionToggle({
-  value,
-  onChange,
-}: {
-  value: TextDirection;
-  onChange: (direction: TextDirection) => void;
-}) {
-  const options: { direction: TextDirection; label: string; title: string }[] = [
-    { direction: "ltr", label: "LTR", title: "Left to right" },
-    { direction: "rtl", label: "RTL", title: "Right to left" },
-  ];
-  return (
-    <div className="inline-flex h-8 overflow-hidden rounded-md border border-slate-300" role="group" aria-label="Text direction">
-      {options.map((option) => {
-        const active = value === option.direction;
-        return (
-          <button
-            key={option.direction}
-            type="button"
-            title={option.title}
-            aria-label={option.title}
-            aria-pressed={active}
-            onClick={() => onChange(option.direction)}
-            className={cn(
-              "h-full min-w-8 px-2 text-xs font-medium",
-              active ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50",
-            )}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -412,19 +270,6 @@ export default function AgentFilesPage() {
     [navigateWithQuery, selectedPath],
   );
 
-  const editorExtensions = useMemo(() => {
-    const ext = extension(selectedPath);
-    const lang =
-      ext === "json" ? [json()] : ext === "md" || ext === "markdown" ? [markdown()] : [];
-    const direction = isTextOrMarkdownFile(selectedPath) ? textDirection : "ltr";
-    return [
-      EditorView.lineWrapping,
-      editorAutoHeight,
-      EditorView.contentAttributes.of({ dir: direction }),
-      ...lang,
-    ];
-  }, [selectedPath, textDirection]);
-
   const reloadFolder = useCallback(async () => {
     setEntries(await fetchFolder(currentFolder));
   }, [currentFolder, fetchFolder]);
@@ -444,25 +289,9 @@ export default function AgentFilesPage() {
       setSaveStatus("saved");
     } catch (err) {
       setSaveStatus("idle");
-      throw err;
+      setNotice({ title: "Could not save file", message: userFacingApiError(err) });
     }
   }, [selectedPath, dirty, content, saveStatus, reloadFolder]);
-
-  useEffect(() => {
-    if (viewMode || !selectedPath || !isEditable(selectedPath)) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault();
-        if (dirty && saveStatus !== "saving") {
-          saveFile().catch(console.error);
-        }
-      }
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [viewMode, selectedPath, dirty, saveStatus, saveFile]);
 
   const renameFile = async () => {
     if (!fileToRename || renaming) return;
@@ -536,66 +365,6 @@ export default function AgentFilesPage() {
     await api.post("/files", { path, content: "" });
     setNewFileName("");
     navigateWithQuery(path);
-  };
-
-  const renderFileContent = () => {
-    if (!selectedPath) {
-      return <p className="text-sm text-slate-500">Select a file to view or edit.</p>;
-    }
-
-    if (isPdfFile(selectedPath)) {
-      return (
-        <iframe
-          key={selectedPath}
-          title={fileName(selectedPath)}
-          src={fileRawUrl(selectedPath)}
-          className="h-full min-h-[480px] w-full border-0 bg-slate-100"
-        />
-      );
-    }
-
-    const ext = extension(selectedPath);
-
-    const contentDir = isTextOrMarkdownFile(selectedPath) ? textDirection : "ltr";
-
-    if (viewMode) {
-      if (ext === "md" || ext === "markdown") {
-        return (
-          <div
-            dir={contentDir}
-            className="overflow-x-auto text-sm leading-relaxed text-slate-900 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:ps-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_table]:mb-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-start [&_th]:font-semibold [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:ps-5"
-          >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-          </div>
-        );
-      }
-
-      return (
-        <pre dir={contentDir} className="whitespace-pre-wrap break-words font-mono text-sm text-slate-900">
-          {content}
-        </pre>
-      );
-    }
-
-    if (!isEditable(selectedPath)) {
-      return <p className="rounded bg-amber-50 p-3 text-sm">This file type is read-only in the editor.</p>;
-    }
-
-    return (
-      <div dir={contentDir} className="min-w-0 max-w-full overflow-hidden rounded border">
-        <CodeMirror
-          value={content}
-          theme={vscodeDark}
-          basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLineGutter: false }}
-          extensions={editorExtensions}
-          onChange={(value) => {
-            setContent(value);
-            setDirty(true);
-            setSaveStatus("idle");
-          }}
-        />
-      </div>
-    );
   };
 
   const renderFileSidebar = () => (
@@ -740,7 +509,7 @@ export default function AgentFilesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Agent Files</h1>
+      <h1 className="text-2xl font-semibold">Files</h1>
 
       {loadError ? <p className="rounded bg-amber-50 p-3 text-sm text-amber-900">{loadError}</p> : null}
 
@@ -749,158 +518,125 @@ export default function AgentFilesPage() {
         sidebarCollapsed={sidebarCollapsed}
         sidebar={renderFileSidebar()}
       >
-        <div
-          className={cn(
-            "flex flex-col rounded-lg border bg-white",
-            selectedPath && isPdfFile(selectedPath) && "md:h-[calc(100vh-11rem)]",
-          )}
-        >
-          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b px-2 py-1.5">
-            {sidebarCollapsed ? (
-              <ToolbarIconButton
-                title="Expand files panel"
-                variant="outline"
-                onClick={toggleSidebar}
-                className="hidden md:inline-flex"
-              >
-                <PanelLeftIcon />
-              </ToolbarIconButton>
-            ) : null}
-
-            {selectedPath ? (
+        {selectedPath ? (
+          <FileEditorPane
+            path={selectedPath}
+            content={content}
+            sizeBytes={selectedMeta.size_bytes}
+            modifiedAt={selectedMeta.modified_at}
+            dirty={dirty}
+            saveStatus={saveStatus}
+            viewMode={viewMode}
+            textDirection={textDirection}
+            onContentChange={(value) => {
+              setContent(value);
+              setDirty(true);
+              setSaveStatus("idle");
+            }}
+            onViewModeChange={(nextViewMode) => setFileMode(nextViewMode ? "view" : "edit")}
+            onTextDirectionChange={setFileTextDirection}
+            onSave={() => {
+              void saveFile();
+            }}
+            toolbarStart={
+              sidebarCollapsed ? (
+                <ToolbarIconButton
+                  title="Expand files panel"
+                  variant="outline"
+                  onClick={toggleSidebar}
+                  className="hidden md:inline-flex"
+                >
+                  <PanelLeftIcon />
+                </ToolbarIconButton>
+              ) : null
+            }
+            toolbarExtra={
               <>
-                <span className="shrink-0 text-sm font-semibold text-slate-800">{fileName(selectedPath)}</span>
-                <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">|</span>
-                <span className="shrink-0 text-xs text-slate-500">{formatFileSize(selectedMeta.size_bytes)}</span>
-                <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">|</span>
-                <span className="shrink-0 text-xs text-slate-500" title={selectedMeta.modified_at ?? undefined}>
-                  {formatModified(selectedMeta.modified_at)}
-                </span>
-                {dirty ? (
-                  <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
-                    Unsaved
-                  </span>
+                {!isProtectedWorkspacePath(selectedPath) ? (
+                  <Button
+                    variant="outline"
+                    className="h-8 px-2.5 text-xs"
+                    disabled={renaming}
+                    onClick={() => {
+                      const entry =
+                        entries.find((item) => item.path === selectedPath) ?? {
+                          path: selectedPath,
+                          name: fileName(selectedPath),
+                          is_dir: false,
+                          size_bytes: selectedMeta.size_bytes,
+                          modified_at: selectedMeta.modified_at,
+                        };
+                      openRename(entry);
+                    }}
+                  >
+                    Rename
+                  </Button>
                 ) : null}
+                {!isProtectedWorkspacePath(selectedPath) ? (
+                  <ToolbarIconButton
+                    title="Delete file"
+                    variant="destructive"
+                    disabled={deleting}
+                    onClick={() => {
+                      const entry =
+                        entries.find((item) => item.path === selectedPath) ?? {
+                          path: selectedPath,
+                          name: fileName(selectedPath),
+                          is_dir: false,
+                          size_bytes: selectedMeta.size_bytes,
+                          modified_at: selectedMeta.modified_at,
+                        };
+                      setDeleteTarget(entry);
+                    }}
+                  >
+                    <TrashIcon />
+                  </ToolbarIconButton>
+                ) : null}
+              </>
+            }
+          />
+        ) : (
+          <div className="flex flex-col rounded-lg border bg-white">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto border-b px-2 py-1.5">
+              {sidebarCollapsed ? (
+                <ToolbarIconButton
+                  title="Expand files panel"
+                  variant="outline"
+                  onClick={toggleSidebar}
+                  className="hidden md:inline-flex"
+                >
+                  <PanelLeftIcon />
+                </ToolbarIconButton>
+              ) : null}
+              <span className="min-w-0 truncate text-sm text-slate-500">
+                {currentFolder ? fileName(currentFolder) : "Select a file to view or edit"}
+              </span>
+              {currentFolder && !isProtectedWorkspacePath(currentFolder) ? (
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                  {isTextOrMarkdownFile(selectedPath) ? (
-                    <TextDirectionToggle value={textDirection} onChange={setFileTextDirection} />
-                  ) : null}
-                  {isPdfFile(selectedPath) ? (
-                    <a
-                      href={fileRawUrl(selectedPath, true)}
-                      download={fileName(selectedPath)}
-                      title="Download PDF"
-                      aria-label="Download PDF"
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    >
-                      <DownloadIcon />
-                    </a>
-                  ) : null}
-                  {viewMode ? (
-                    isEditable(selectedPath) ? (
-                      <Button variant="outline" className="h-8 px-2.5 text-xs" onClick={() => setFileMode("edit")}>
-                        Edit
-                      </Button>
-                    ) : null
-                  ) : (
-                    <Button variant="outline" className="h-8 px-2.5 text-xs" onClick={() => setFileMode("view")}>
-                      View
-                    </Button>
-                  )}
-                  {!viewMode ? (
-                    <Button
-                      className="h-8 px-2.5 text-xs"
-                      disabled={
-                        saveStatus === "saving" ||
-                        saveStatus === "saved" ||
-                        !dirty ||
-                        !isEditable(selectedPath)
-                      }
-                      onClick={() => saveFile().catch(console.error)}
-                    >
-                      {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
-                    </Button>
-                  ) : null}
-                  {!isProtectedWorkspacePath(selectedPath) ? (
-                    <Button
-                      variant="outline"
-                      className="h-8 px-2.5 text-xs"
-                      disabled={renaming}
-                      onClick={() => {
-                        const entry =
-                          entries.find((item) => item.path === selectedPath) ?? {
-                            path: selectedPath,
-                            name: fileName(selectedPath),
-                            is_dir: false,
-                            size_bytes: selectedMeta.size_bytes,
-                            modified_at: selectedMeta.modified_at,
-                          };
-                        openRename(entry);
-                      }}
-                    >
-                      Rename
-                    </Button>
-                  ) : null}
-                  {!isProtectedWorkspacePath(selectedPath) ? (
-                    <ToolbarIconButton
-                      title="Delete file"
-                      variant="destructive"
-                      disabled={deleting}
-                      onClick={() => {
-                        const entry =
-                          entries.find((item) => item.path === selectedPath) ?? {
-                            path: selectedPath,
-                            name: fileName(selectedPath),
-                            is_dir: false,
-                            size_bytes: selectedMeta.size_bytes,
-                            modified_at: selectedMeta.modified_at,
-                          };
-                        setDeleteTarget(entry);
-                      }}
-                    >
-                      <TrashIcon />
-                    </ToolbarIconButton>
-                  ) : null}
+                  <ToolbarIconButton
+                    title="Delete folder"
+                    variant="destructive"
+                    disabled={deleting}
+                    onClick={() =>
+                      setDeleteTarget({
+                        path: currentFolder,
+                        name: fileName(currentFolder),
+                        is_dir: true,
+                        size_bytes: null,
+                        modified_at: null,
+                      })
+                    }
+                  >
+                    <TrashIcon />
+                  </ToolbarIconButton>
                 </div>
-              </>
-            ) : (
-              <>
-                <span className="min-w-0 truncate text-sm text-slate-500">
-                  {currentFolder ? fileName(currentFolder) : "Select a file to view or edit"}
-                </span>
-                {currentFolder && !isProtectedWorkspacePath(currentFolder) ? (
-                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                    <ToolbarIconButton
-                      title="Delete folder"
-                      variant="destructive"
-                      disabled={deleting}
-                      onClick={() =>
-                        setDeleteTarget({
-                          path: currentFolder,
-                          name: fileName(currentFolder),
-                          is_dir: true,
-                          size_bytes: null,
-                          modified_at: null,
-                        })
-                      }
-                    >
-                      <TrashIcon />
-                    </ToolbarIconButton>
-                  </div>
-                ) : null}
-              </>
-            )}
+              ) : null}
+            </div>
+            <div className="min-w-0 p-4">
+              <p className="text-sm text-slate-500">Select a file to view or edit.</p>
+            </div>
           </div>
-
-          <div
-            className={cn(
-              "min-w-0",
-              selectedPath && isPdfFile(selectedPath) ? "min-h-0 flex-1 p-0" : "p-4",
-            )}
-          >
-            {renderFileContent()}
-          </div>
-        </div>
+        )}
       </SplitPanelLayout>
 
       <ConfirmModal

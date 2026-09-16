@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Agent, api, buildAgentWritePayload, Department, ModelsResponse, userFacingApiError } from "@/api/client";
 import { AgentDetailSummary } from "@/components/agents/AgentDetailSummary";
 import { AgentFormDialog } from "@/components/agents/AgentFormDialog";
+import { AgentPromptModal } from "@/components/agents/AgentPromptModal";
+import { openAgentPrompt, type AgentPromptState } from "@/lib/agent-prompt";
 import { AgentRunStateTag } from "@/components/agents/AgentRunningTag";
 import {
   EnabledToggle,
@@ -44,6 +46,9 @@ export default function AgentsPage() {
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [draftCrond, setDraftCrond] = useState<Record<number, string>>({});
   const [draftTimeout, setDraftTimeout] = useState<Record<number, string>>({});
+  const [promptBusyId, setPromptBusyId] = useState<number | null>(null);
+  const [promptState, setPromptState] = useState<AgentPromptState | null>(null);
+  const promptBusyRef = useRef(false);
   const [pendingTimeoutChange, setPendingTimeoutChange] = useState<{
     agent: Agent;
     newTimeoutSeconds: number;
@@ -192,12 +197,42 @@ export default function AgentsPage() {
     setPendingTimeoutChange(null);
   };
 
+  const showNotice = useCallback((next: { title: string; message: string }) => {
+    setNotice(next);
+  }, []);
+
   const revertTimeout = (agent: Agent) => {
     setDraftTimeout((prev) => ({
       ...prev,
       [agent.id]: formatTimeoutSeconds(agent.timeout_seconds),
     }));
   };
+
+  const openPrompt = async (agent: Agent) => {
+    if (promptBusyRef.current || promptState) return;
+    promptBusyRef.current = true;
+    setPromptBusyId(agent.id);
+    try {
+      setPromptState(await openAgentPrompt(agent));
+    } catch (err) {
+      setNotice({ title: "Could not open prompt", message: userFacingApiError(err) });
+    } finally {
+      promptBusyRef.current = false;
+      setPromptBusyId(null);
+    }
+  };
+
+  const promptButton = (agent: Agent) => (
+    <Button
+      variant="outline"
+      disabled={promptBusyId != null || !!promptState}
+      onClick={() => {
+        void openPrompt(agent);
+      }}
+    >
+      {promptBusyId === agent.id ? "Opening..." : "Edit"}
+    </Button>
+  );
 
   const pendingTimeoutImpact = useMemo(() => {
     if (!pendingTimeoutChange?.agent.active_run) return null;
@@ -281,6 +316,7 @@ export default function AgentsPage() {
                     direction={sortDir}
                     onSort={toggleSort}
                   />
+                  <th className="px-4 py-2">Prompt</th>
                   <th className="px-4 py-2">Actions</th>
                 </tr>
               </thead>
@@ -331,6 +367,7 @@ export default function AgentsPage() {
                         }}
                       />
                     </td>
+                    <td className="px-4 py-2">{promptButton(agent)}</td>
                     <td className="px-4 py-2">
                       <div className="flex gap-2">
                         <Button variant="outline" onClick={() => setDeleteAgent(agent)}>
@@ -393,6 +430,7 @@ export default function AgentsPage() {
                       }}
                     />
                   </DataCardField>
+                  <DataCardField label="Prompt">{promptButton(agent)}</DataCardField>
                 </dl>
                 <DataCardActions>
                   <Button variant="outline" onClick={() => setDeleteAgent(agent)}>
@@ -405,6 +443,8 @@ export default function AgentsPage() {
           </MobileCardList>
         </>
       )}
+
+      <AgentPromptModal state={promptState} onStateChange={setPromptState} onNotice={showNotice} />
 
       <AgentFormDialog
         open={formOpen}

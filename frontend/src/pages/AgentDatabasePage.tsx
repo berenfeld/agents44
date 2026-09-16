@@ -1278,7 +1278,7 @@ export default function AgentDatabasePage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-        <h1 className="text-2xl font-semibold">Agent Database</h1>
+        <h1 className="text-2xl font-semibold">Database</h1>
         {dbMeta ? (
           <p className="text-xs text-slate-500">
             PostgreSQL {dbMeta.version} · {dbMeta.table_count} {dbMeta.table_count === 1 ? "table" : "tables"} ·{" "}

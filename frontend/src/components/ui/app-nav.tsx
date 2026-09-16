@@ -9,8 +9,8 @@ const NAV_ITEMS = [
   { to: "/agents", label: "Agents", match: (path: string) => path === "/agents" },
   { to: "/agents_runs", label: "Agents Runs", match: (path: string) => path.startsWith("/agents_runs") || path.startsWith("/runs") },
   { to: "/departments", label: "Departments", match: (path: string) => path.startsWith("/departments") },
-  { to: "/agents_files", label: "Agent Files", match: (path: string) => path.startsWith("/agents_files") || path.startsWith("/files") },
-  { to: "/agent_database", label: "Agent Database", match: (path: string) => path.startsWith("/agent_database") },
+  { to: "/agents_files", label: "Files", match: (path: string) => path.startsWith("/agents_files") || path.startsWith("/files") },
+  { to: "/agent_database", label: "Database", match: (path: string) => path.startsWith("/agent_database") },
   { to: "/settings", label: "Settings", match: (path: string) => path.startsWith("/settings") },
 ] as const;
 
