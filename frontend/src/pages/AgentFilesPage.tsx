@@ -98,6 +98,31 @@ function isEditable(path: string) {
   return ["txt", "json", "md", "markdown", "log"].includes(ext);
 }
 
+function isTextOrMarkdownFile(path: string) {
+  const ext = extension(path);
+  return !ext || ext === "txt" || ext === "md" || ext === "markdown";
+}
+
+type TextDirection = "ltr" | "rtl";
+
+const TEXT_DIRECTION_STORAGE_KEY = "agents44.agentFiles.textDirection";
+
+function readTextDirection(): TextDirection {
+  try {
+    return window.localStorage.getItem(TEXT_DIRECTION_STORAGE_KEY) === "rtl" ? "rtl" : "ltr";
+  } catch {
+    return "ltr";
+  }
+}
+
+function writeTextDirection(direction: TextDirection) {
+  try {
+    window.localStorage.setItem(TEXT_DIRECTION_STORAGE_KEY, direction);
+  } catch {
+    // Ignore storage failures (private mode, quota). The in-memory toggle still works.
+  }
+}
+
 function isPdfFile(path: string) {
   return extension(path) === "pdf";
 }
@@ -176,6 +201,42 @@ function DownloadIcon({ className }: { className?: string }) {
   );
 }
 
+function TextDirectionToggle({
+  value,
+  onChange,
+}: {
+  value: TextDirection;
+  onChange: (direction: TextDirection) => void;
+}) {
+  const options: { direction: TextDirection; label: string; title: string }[] = [
+    { direction: "ltr", label: "LTR", title: "Left to right" },
+    { direction: "rtl", label: "RTL", title: "Right to left" },
+  ];
+  return (
+    <div className="inline-flex h-8 overflow-hidden rounded-md border border-slate-300" role="group" aria-label="Text direction">
+      {options.map((option) => {
+        const active = value === option.direction;
+        return (
+          <button
+            key={option.direction}
+            type="button"
+            title={option.title}
+            aria-label={option.title}
+            aria-pressed={active}
+            onClick={() => onChange(option.direction)}
+            className={cn(
+              "h-full min-w-8 px-2 text-xs font-medium",
+              active ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolbarIconButton({
   title,
   onClick,
@@ -239,6 +300,12 @@ export default function AgentFilesPage() {
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [viewMode, setViewMode] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [textDirection, setTextDirection] = useState<TextDirection>(readTextDirection);
+
+  const setFileTextDirection = useCallback((direction: TextDirection) => {
+    setTextDirection(direction);
+    writeTextDirection(direction);
+  }, []);
 
   const breadcrumbSegments = useMemo(
     () => (currentFolder ? currentFolder.split("/").filter(Boolean) : []),
@@ -349,8 +416,14 @@ export default function AgentFilesPage() {
     const ext = extension(selectedPath);
     const lang =
       ext === "json" ? [json()] : ext === "md" || ext === "markdown" ? [markdown()] : [];
-    return [EditorView.lineWrapping, editorAutoHeight, ...lang];
-  }, [selectedPath]);
+    const direction = isTextOrMarkdownFile(selectedPath) ? textDirection : "ltr";
+    return [
+      EditorView.lineWrapping,
+      editorAutoHeight,
+      EditorView.contentAttributes.of({ dir: direction }),
+      ...lang,
+    ];
+  }, [selectedPath, textDirection]);
 
   const reloadFolder = useCallback(async () => {
     setEntries(await fetchFolder(currentFolder));
@@ -483,17 +556,22 @@ export default function AgentFilesPage() {
 
     const ext = extension(selectedPath);
 
+    const contentDir = isTextOrMarkdownFile(selectedPath) ? textDirection : "ltr";
+
     if (viewMode) {
       if (ext === "md" || ext === "markdown") {
         return (
-          <div className="overflow-x-auto text-sm leading-relaxed text-slate-900 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_table]:mb-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5">
+          <div
+            dir={contentDir}
+            className="overflow-x-auto text-sm leading-relaxed text-slate-900 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_h1]:mb-3 [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-2 [&_h3]:font-medium [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:ps-5 [&_p]:mb-3 [&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:text-slate-100 [&_table]:mb-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-start [&_th]:font-semibold [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:ps-5"
+          >
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
         );
       }
 
       return (
-        <pre className="whitespace-pre-wrap break-words font-mono text-sm text-slate-900">
+        <pre dir={contentDir} className="whitespace-pre-wrap break-words font-mono text-sm text-slate-900">
           {content}
         </pre>
       );
@@ -504,7 +582,7 @@ export default function AgentFilesPage() {
     }
 
     return (
-      <div className="min-w-0 max-w-full overflow-hidden rounded border">
+      <div dir={contentDir} className="min-w-0 max-w-full overflow-hidden rounded border">
         <CodeMirror
           value={content}
           theme={vscodeDark}
@@ -704,6 +782,9 @@ export default function AgentFilesPage() {
                   </span>
                 ) : null}
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                  {isTextOrMarkdownFile(selectedPath) ? (
+                    <TextDirectionToggle value={textDirection} onChange={setFileTextDirection} />
+                  ) : null}
                   {isPdfFile(selectedPath) ? (
                     <a
                       href={fileRawUrl(selectedPath, true)}
