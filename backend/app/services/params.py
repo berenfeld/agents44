@@ -8,11 +8,6 @@ logger = logging.getLogger(__name__)
 
 SEED_PARAMS = [
     {
-        "key": "ALLOWED_EMAILS",
-        "value": json.dumps([]),
-        "description": "JSON array of Google emails permitted to log in",
-    },
-    {
         "key": "NOTIFY_ON",
         "value": "failures",
         "description": "Auto-email admin on run events: all | failures | none",

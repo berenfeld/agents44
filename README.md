@@ -42,8 +42,8 @@ Or equivalently: `docker compose up --build`.
 
 ### Dev auth
 
-- **Google Sign-In**: set `GOOGLE_CLIENT_ID` and add emails to `ALLOWED_EMAILS` in `system_params`
-- **Dev login**: set `DEV_LOGIN_EMAIL` and `DEV_LOGIN_PASSWORD` in `.env`
+- **Google Sign-In**: set `GOOGLE_CLIENT_ID` and add emails under **Settings → Allowed emails**. Only those emails can sign in. Admin login is not restricted.
+- **Admin login**: set `DEV_LOGIN_EMAIL` and `DEV_LOGIN_PASSWORD` in `.env`
 
 ## Project layout
 
@@ -79,6 +79,9 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `DELETE /api/departments/{id}/whatsapp` | Remove WhatsApp sending (conversations are kept) |
 | `POST /api/departments/{id}/email` | Provision Gmail sending (address + Google app password) |
 | `DELETE /api/departments/{id}/email` | Remove email sending (messages are kept) |
+| `GET /api/allowed-emails` | List emails allowed to sign in |
+| `POST /api/allowed-emails` | Allow an email to sign in |
+| `DELETE /api/allowed-emails/{id}` | Remove an allowed email |
 | `GET /api/agents` | List agents |
 | `POST /api/agents` | Create agent |
 | `POST /api/agents/{id}/trigger` | Manual run |
@@ -114,7 +117,6 @@ All mutating API calls use `Content-Type: application/json`.
 
 ## system_params keys (CAPITAL_LETTERS)
 
-- `ALLOWED_EMAILS` — JSON array of allowed Google emails
 - `NOTIFY_ON` — `all` | `failures` | `none`
 - `MODEL_PRICING` — per-model USD per 1M tokens for cost estimates
 - `CLAUDE_CLI_ARGS` — JSON array of extra Claude CLI flags

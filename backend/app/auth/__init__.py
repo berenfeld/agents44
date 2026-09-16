@@ -7,7 +7,7 @@ from google.oauth2 import id_token
 
 from app.config import Config
 from app.errors import APIClientError
-from app.services.params import get_param_json
+from app.services.allowed_emails import email_is_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,10 @@ def auth_google():
     except ValueError as exc:
         logger.warning("Google token verification failed: %s", exc)
         raise APIClientError("Invalid Google credential", 401) from exc
-    email = idinfo.get("email")
+    email = (idinfo.get("email") or "").strip().lower()
     if not email:
         raise APIClientError("Google account has no email", 400)
-    allowed = get_param_json("ALLOWED_EMAILS", []) or []
-    if allowed and email not in allowed:
+    if not email_is_allowed(email):
         raise APIClientError("Email is not allowed", 403)
     session["user_email"] = email
     return jsonify({"authenticated": True, "email": email})

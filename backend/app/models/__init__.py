@@ -12,6 +12,7 @@ from app.models.email import (
 )
 from app.models.system_agent import SystemAgent
 from app.models.system_agent_run import SystemAgentRun
+from app.models.system_allowed_email import SystemAllowedEmail
 from app.models.system_department import SystemDepartment
 from app.models.system_param import SystemParam
 from app.models.run_status import RunStatus
@@ -30,6 +31,7 @@ __all__ = [
     "RunStatus",
     "SystemAgent",
     "SystemAgentRun",
+    "SystemAllowedEmail",
     "SystemClaudeConversation",
     "SystemClaudeMessage",
     "SystemDepartment",

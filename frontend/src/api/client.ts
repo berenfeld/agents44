@@ -207,6 +207,12 @@ export type SystemParam = {
   description: string | null;
 };
 
+export type AllowedEmail = {
+  id: number;
+  email: string;
+  created_at: string | null;
+};
+
 export type AgentDbMeta = {
   version: string;
   table_count: number;

@@ -193,9 +193,9 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
             {devLoginEnabled ? (
               <form className="space-y-4" onSubmit={handleDevLogin} autoComplete="off">
                 <div>
-                  <Label htmlFor="dev-email">Dev login email</Label>
+                  <Label htmlFor="admin-email">Admin login email</Label>
                   <Input
-                    id="dev-email"
+                    id="admin-email"
                     name="username"
                     autoComplete="username"
                     value={email}
@@ -203,9 +203,9 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
                   />
                 </div>
                 <div>
-                  <Label htmlFor="dev-password">Dev login password</Label>
+                  <Label htmlFor="admin-password">Admin login password</Label>
                   <Input
-                    id="dev-password"
+                    id="admin-password"
                     name="password"
                     type="password"
                     autoComplete="current-password"
@@ -214,7 +214,7 @@ export default function LoginPage({ onLogin }: { onLogin: () => void | Promise<v
                   />
                 </div>
                 <Button variant="outline" className="w-full" type="submit" disabled={devSubmitting}>
-                  {devSubmitting ? "Signing in..." : "Dev login"}
+                  {devSubmitting ? "Signing in..." : "Admin login"}
                 </Button>
               </form>
             ) : null}

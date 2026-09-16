@@ -53,11 +53,18 @@ def dev_login_route():
     return dev_login()
 
 
+HIDDEN_PARAM_KEYS = frozenset({"ALLOWED_EMAILS"})
+
+
 @params_bp.get("")
 @api_endpoint
 @login_required
 def list_params():
-    rows = SystemParam.query.order_by(SystemParam.key).all()
+    rows = (
+        SystemParam.query.filter(SystemParam.key.notin_(HIDDEN_PARAM_KEYS))
+        .order_by(SystemParam.key)
+        .all()
+    )
     return jsonify([row.to_dict() for row in rows])
 
 
@@ -69,7 +76,7 @@ def update_params():
     items = payload.get("items", [])
     for item in items:
         key = item.get("key")
-        if not key:
+        if not key or key in HIDDEN_PARAM_KEYS:
             continue
         row = SystemParam.query.filter_by(key=key).first()
         if row:
@@ -79,5 +86,9 @@ def update_params():
             db.session.add(
                 SystemParam(key=key, value=item.get("value", ""), description=item.get("description"))
             )
-    rows = SystemParam.query.order_by(SystemParam.key).all()
+    rows = (
+        SystemParam.query.filter(SystemParam.key.notin_(HIDDEN_PARAM_KEYS))
+        .order_by(SystemParam.key)
+        .all()
+    )
     return jsonify([row.to_dict() for row in rows])

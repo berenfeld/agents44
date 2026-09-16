@@ -22,6 +22,7 @@ SYSTEM_TABLES = frozenset(
         "system_email_conf",
         "system_email_messages",
         "system_params",
+        "system_allowed_emails",
         "system_whatsapp_conversations",
         "system_whatsapp_messages",
     }

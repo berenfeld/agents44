@@ -10,6 +10,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app.api.agent_db import agent_db_bp
 from app.api.agents import agents_bp
+from app.api.allowed_emails import allowed_emails_bp
 from app.api.auth_routes import auth_bp, params_bp
 from app.api.claude import claude_bp
 from app.api.departments import departments_bp
@@ -91,6 +92,7 @@ def create_app() -> Flask:
     app.register_blueprint(agent_db_bp, url_prefix="/api/agent-db")
     app.register_blueprint(files_bp, url_prefix="/api/files")
     app.register_blueprint(params_bp, url_prefix="/api/system-params")
+    app.register_blueprint(allowed_emails_bp, url_prefix="/api/allowed-emails")
     app.register_blueprint(claude_bp, url_prefix="/api/claude")
     app.register_blueprint(whatsapp_bp, url_prefix="/api/whatsapp")
     app.register_blueprint(emails_bp, url_prefix="/api/emails")

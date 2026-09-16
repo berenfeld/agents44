@@ -179,8 +179,8 @@ if [ "$ANTHROPIC_MISSING" -eq 1 ]; then
 else
   echo "  Anthropic:  stored in ${ENV_FILE} (not ~/.bashrc)"
 fi
-echo "  Dev login: ${DEV_LOGIN_EMAIL}"
-echo "  Dev pass:  ${DEV_LOGIN_PASSWORD}"
+echo "  Admin login: ${DEV_LOGIN_EMAIL}"
+echo "  Admin pass:  ${DEV_LOGIN_PASSWORD}"
 echo "             (from ${ENV_FILE}; frontend does not embed this password)"
 if [ -n "$GOOGLE_CLIENT_ID" ]; then
   echo "  Google:    enabled"
