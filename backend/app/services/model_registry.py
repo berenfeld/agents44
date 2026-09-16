@@ -52,6 +52,14 @@ def resolve_default_model(models: list[str]) -> str:
 
 def init_model_registry(app) -> None:
     with app.app_context():
+        api_key = (app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            logger.warning(
+                "ANTHROPIC_API_KEY is not set — skipping model discovery; agent runs will fail"
+            )
+            app.config["SUPPORTED_MODELS"] = []
+            app.config["DEFAULT_MODEL_RESOLVED"] = ""
+            return
         models = discover_models()
         default_model = resolve_default_model(models)
         app.config["SUPPORTED_MODELS"] = models
@@ -71,16 +79,13 @@ def init_model_registry(app) -> None:
 
 def get_supported_models() -> list[str]:
     models = current_app.config.get("SUPPORTED_MODELS")
-    if not models:
+    if models is None:
         raise RuntimeError("Supported models are not initialized")
-    return models
+    return list(models)
 
 
 def get_default_model() -> str:
-    default_model = current_app.config.get("DEFAULT_MODEL_RESOLVED")
-    if not default_model:
-        raise RuntimeError("Default model is not initialized")
-    return default_model
+    return current_app.config.get("DEFAULT_MODEL_RESOLVED") or ""
 
 
 def validate_model(model: str) -> bool:

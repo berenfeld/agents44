@@ -8,10 +8,12 @@
 # Generated once (stable across upgrades — delete the .env to regenerate):
 #   PSQL_PASSWORD, FLASK_SECRET_KEY, DEV_LOGIN_PASSWORD, ANTHROPIC_API_KEY
 #
-# Seed ANTHROPIC_API_KEY only when the instance .env is new or the key is empty:
+# ANTHROPIC_API_KEY is optional at start (UI comes up; agent runs fail until it is set).
+# Seed it when the instance .env is new or the key is empty:
 #   ANTHROPIC_API_KEY='...' ./lightsail-start.sh <name> [port]
+# Or leave it blank and later: ./set-env-var.sh ~/.agents/<name>/.env ANTHROPIC_API_KEY '...'
+# then re-run this script (or docker restart agents44-<name>).
 # After that the key lives in ~/.agents/<name>/.env — do not export it in ~/.bashrc.
-# Rotate: ./set-env-var.sh ~/.agents/<name>/.env ANTHROPIC_API_KEY '...' && ./lightsail-start.sh <name>
 #
 # Refreshed from the host environment on every start (when set):
 #   GOOGLE_CLIENT_ID, FRONTEND_URL, DEV_LOGIN_EMAIL, ADMIN_EMAIL, SMTP_*
@@ -22,9 +24,8 @@ PORT="${2:-8080}"
 
 if [ -z "$NAME" ]; then
   echo "Usage: $0 <name> [port]" >&2
-  echo "  First start: ANTHROPIC_API_KEY='...' $0 <name> [port]" >&2
-  echo "  Later starts reuse ~/.agents/<name>/.env (do not put the key in ~/.bashrc)." >&2
-  echo "  Optional: FRONTEND_URL GOOGLE_CLIENT_ID DEV_LOGIN_EMAIL DEV_LOGIN_PASSWORD AGENTS44_IMAGE_TAG" >&2
+  echo "  Optional: ANTHROPIC_API_KEY FRONTEND_URL GOOGLE_CLIENT_ID DEV_LOGIN_EMAIL DEV_LOGIN_PASSWORD AGENTS44_IMAGE_TAG" >&2
+  echo "  Anthropic key lives in ~/.agents/<name>/.env (do not put it in ~/.bashrc)." >&2
   exit 1
 fi
 
@@ -87,17 +88,15 @@ DEV_LOGIN_PASSWORD="${HOST_DEV_PASS:-${DEV_LOGIN_PASSWORD:-$(rand_password | hea
 DEV_LOGIN_EMAIL="${HOST_DEV_EMAIL:-${DEV_LOGIN_EMAIL:-admin@catch44.co.il}}"
 
 # Anthropic key is per-instance. Host env seeds only when the .env has none.
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  ANTHROPIC_API_KEY="${HOST_ANTHROPIC}"
-fi
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "ERROR: ANTHROPIC_API_KEY is missing for instance ${NAME}" >&2
-  echo "       New instance:  ANTHROPIC_API_KEY='...' $0 ${NAME} ${PORT}" >&2
-  echo "       Existing:      put it in ${ENV_FILE}" >&2
-  echo "       Rotate:        $(dirname "$0")/set-env-var.sh ${ENV_FILE} ANTHROPIC_API_KEY '...'" >&2
-  echo "                      then re-run $0 ${NAME} ${PORT}" >&2
-  echo "       Do not export the key in ~/.bashrc (it would be shared by every instance)." >&2
-  exit 1
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${HOST_ANTHROPIC:-}}"
+ANTHROPIC_MISSING=0
+if [ -z "${ANTHROPIC_API_KEY}" ]; then
+  ANTHROPIC_MISSING=1
+  echo "WARNING: ANTHROPIC_API_KEY is empty for instance ${NAME}" >&2
+  echo "         Container will start; agent runs and the model list will fail until you set it." >&2
+  echo "         Put the key in ${ENV_FILE} then re-run $0 ${NAME} ${PORT}" >&2
+  echo "         (or: $(dirname "$0")/set-env-var.sh ${ENV_FILE} ANTHROPIC_API_KEY '...')" >&2
+  echo "         Do not export the key in ~/.bashrc (it would be shared by every instance)." >&2
 fi
 
 # Always refresh from host when provided
@@ -179,7 +178,11 @@ echo "  Image:     ${IMAGE}"
 echo "  URL:       ${FRONTEND_URL}"
 echo "  Health:    ${FRONTEND_URL%/}/api/health"
 echo "  Env file:  ${ENV_FILE}  ($( [ "$ENV_REUSED" -eq 1 ] && echo reused || echo created ))"
-echo "  Anthropic:  stored in ${ENV_FILE} (not ~/.bashrc)"
+if [ "$ANTHROPIC_MISSING" -eq 1 ]; then
+  echo "  Anthropic:  EMPTY — set ANTHROPIC_API_KEY in ${ENV_FILE} then re-run this script"
+else
+  echo "  Anthropic:  stored in ${ENV_FILE} (not ~/.bashrc)"
+fi
 echo "  Dev login: ${DEV_LOGIN_EMAIL}"
 echo "  Dev pass:  ${DEV_LOGIN_PASSWORD}"
 echo "             (from ${ENV_FILE}; frontend does not embed this password)"
