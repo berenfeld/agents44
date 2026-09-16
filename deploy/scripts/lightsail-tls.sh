@@ -1,5 +1,6 @@
 #!/bin/bash
 # Complete Nginx + Let's Encrypt TLS setup for an Agents44 Docker app on Lightsail.
+# Safe to run once per hostname on the same VM (each name gets its own cert + nginx site).
 #
 # Usage:
 #   sudo ./lightsail-tls.sh [dns_name] [backend_port] [email]
@@ -12,7 +13,7 @@
 # Examples:
 #   sudo ./lightsail-tls.sh
 #   sudo ./lightsail-tls.sh agents.catch44.co.il 8080
-#   sudo ./lightsail-tls.sh tase44.catch44.co.il 8081 admin@catch44.co.il
+#   sudo ./lightsail-tls.sh arc.catch44.co.il 8081 admin@catch44.co.il
 #
 # Prerequisites (do these before running):
 #   1. DNS A record for <dns_name> → this VM's public IPv4
@@ -39,6 +40,10 @@ fi
 
 NGINX_AVAILABLE="/etc/nginx/sites-available/${DNS_NAME}"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${DNS_NAME}"
+ACME_AVAILABLE="/etc/nginx/sites-available/00-acme"
+ACME_ENABLED="/etc/nginx/sites-enabled/00-acme"
+SSL_DEFAULT_AVAILABLE="/etc/nginx/sites-available/00-ssl-default"
+SSL_DEFAULT_ENABLED="/etc/nginx/sites-enabled/00-ssl-default"
 WEBROOT="/var/www/certbot"
 LE_DIR="/etc/letsencrypt"
 SSL_CERT="${LE_DIR}/live/${DNS_NAME}/fullchain.pem"
@@ -95,11 +100,44 @@ if [ ! -f "$SSL_DHPARAM" ]; then
   openssl dhparam -out "$SSL_DHPARAM" 2048
 fi
 
-write_http_bootstrap() {
-  cat > "$NGINX_AVAILABLE" <<EOF
+# Shared HTTP default: ACME only. Named vhosts must not use default_server
+# or a second hostname steals port 80 from the first during cert issuance.
+write_acme_default() {
+  cat > "$ACME_AVAILABLE" <<EOF
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root ${WEBROOT};
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+  ln -sfn "$ACME_AVAILABLE" "$ACME_ENABLED"
+}
+
+# Unknown SNI must not present another hostname's certificate.
+write_ssl_default() {
+  cat > "$SSL_DEFAULT_AVAILABLE" <<'EOF'
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_reject_handshake on;
+}
+EOF
+  ln -sfn "$SSL_DEFAULT_AVAILABLE" "$SSL_DEFAULT_ENABLED"
+}
+
+write_http_bootstrap() {
+  cat > "$NGINX_AVAILABLE" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
     server_name ${DNS_NAME};
 
     location /.well-known/acme-challenge/ {
@@ -162,6 +200,7 @@ EOF
 }
 
 echo "==> [5/7] HTTP bootstrap for ACME + install nginx site"
+write_acme_default
 write_http_bootstrap
 ln -sfn "$NGINX_AVAILABLE" "$NGINX_ENABLED"
 nginx -t
@@ -185,8 +224,13 @@ if [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; then
 fi
 
 echo "==> [7/7] Enable HTTPS termination → 127.0.0.1:${BACKEND_PORT}"
+write_ssl_default
 write_https_site
-nginx -t
+if ! nginx -t; then
+  echo "WARNING: ssl_reject_handshake default not accepted — leaving named sites only" >&2
+  rm -f "$SSL_DEFAULT_ENABLED"
+  nginx -t
+fi
 systemctl reload nginx
 systemctl enable --now certbot.timer 2>/dev/null || true
 
@@ -194,7 +238,9 @@ echo ""
 echo "==> Local verification"
 curl -fsS --max-time 5 -H "Host: ${DNS_NAME}" "http://127.0.0.1/api/health" | head -c 200 || true
 echo
-curl -fsSk --max-time 5 "https://127.0.0.1/api/health" -H "Host: ${DNS_NAME}" | head -c 200 || true
+echo | openssl s_client -connect 127.0.0.1:443 -servername "$DNS_NAME" 2>/dev/null \
+  | openssl x509 -noout -subject -ext subjectAltName 2>/dev/null || true
+curl -fsS --max-time 5 --resolve "${DNS_NAME}:443:127.0.0.1" "https://${DNS_NAME}/api/health" | head -c 200 || true
 echo
 
 echo ""
