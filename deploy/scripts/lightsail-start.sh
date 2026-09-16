@@ -6,13 +6,15 @@
 #   ~/.agents/<name>/.env  →  /opt/agents44/.env
 #
 # Generated once (stable across upgrades — delete the .env to regenerate):
-#   PSQL_PASSWORD, FLASK_SECRET_KEY, DEV_LOGIN_PASSWORD
+#   PSQL_PASSWORD, FLASK_SECRET_KEY, DEV_LOGIN_PASSWORD, ANTHROPIC_API_KEY
+#
+# Seed ANTHROPIC_API_KEY only when the instance .env is new or the key is empty:
+#   ANTHROPIC_API_KEY='...' ./lightsail-start.sh <name> [port]
+# After that the key lives in ~/.agents/<name>/.env — do not export it in ~/.bashrc.
+# Rotate: ./set-env-var.sh ~/.agents/<name>/.env ANTHROPIC_API_KEY '...' && ./lightsail-start.sh <name>
 #
 # Refreshed from the host environment on every start (when set):
-#   ANTHROPIC_API_KEY (required), GOOGLE_CLIENT_ID, FRONTEND_URL,
-#   DEV_LOGIN_EMAIL, ADMIN_EMAIL, SMTP_*
-#
-# Required host env: ANTHROPIC_API_KEY (export in ~/.bashrc)
+#   GOOGLE_CLIENT_ID, FRONTEND_URL, DEV_LOGIN_EMAIL, ADMIN_EMAIL, SMTP_*
 set -euo pipefail
 
 NAME="${1:-}"
@@ -20,7 +22,8 @@ PORT="${2:-8080}"
 
 if [ -z "$NAME" ]; then
   echo "Usage: $0 <name> [port]" >&2
-  echo "  Requires ANTHROPIC_API_KEY in the environment." >&2
+  echo "  First start: ANTHROPIC_API_KEY='...' $0 <name> [port]" >&2
+  echo "  Later starts reuse ~/.agents/<name>/.env (do not put the key in ~/.bashrc)." >&2
   echo "  Optional: FRONTEND_URL GOOGLE_CLIENT_ID DEV_LOGIN_EMAIL DEV_LOGIN_PASSWORD AGENTS44_IMAGE_TAG" >&2
   exit 1
 fi
@@ -35,8 +38,11 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
   exit 1
 fi
 
-# Capture host exports before we source the instance .env
+# Capture host exports before we source the instance .env.
+# Unset the host Anthropic key so a leftover ~/.bashrc export cannot
+# override ~/.agents/<name>/.env on upgrade.
 HOST_ANTHROPIC="${ANTHROPIC_API_KEY:-}"
+unset ANTHROPIC_API_KEY
 HOST_GOOGLE="${GOOGLE_CLIENT_ID:-}"
 HOST_FRONTEND="${FRONTEND_URL:-}"
 HOST_DEV_EMAIL="${DEV_LOGIN_EMAIL:-}"
@@ -46,13 +52,6 @@ HOST_SMTP_HOST="${SMTP_HOST:-}"
 HOST_SMTP_PORT="${SMTP_PORT:-}"
 HOST_SMTP_USER="${SMTP_USER:-}"
 HOST_SMTP_PASS="${SMTP_APP_PASSWORD:-}"
-
-if [ -z "$HOST_ANTHROPIC" ]; then
-  echo "ERROR: ANTHROPIC_API_KEY is not set in the environment" >&2
-  echo "       Use:  export ANTHROPIC_API_KEY='...'   (must be exported)" >&2
-  echo "       Check: env | grep '^ANTHROPIC_API_KEY='" >&2
-  exit 1
-fi
 
 REGION="${AWS_REGION:-eu-central-1}"
 ACCOUNT="${AWS_ACCOUNT_ID:-461838309529}"
@@ -87,8 +86,21 @@ FLASK_SECRET_KEY="${FLASK_SECRET_KEY:-$(rand_secret)}"
 DEV_LOGIN_PASSWORD="${HOST_DEV_PASS:-${DEV_LOGIN_PASSWORD:-$(rand_password | head -c 20)}}"
 DEV_LOGIN_EMAIL="${HOST_DEV_EMAIL:-${DEV_LOGIN_EMAIL:-admin@catch44.co.il}}"
 
+# Anthropic key is per-instance. Host env seeds only when the .env has none.
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  ANTHROPIC_API_KEY="${HOST_ANTHROPIC}"
+fi
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "ERROR: ANTHROPIC_API_KEY is missing for instance ${NAME}" >&2
+  echo "       New instance:  ANTHROPIC_API_KEY='...' $0 ${NAME} ${PORT}" >&2
+  echo "       Existing:      put it in ${ENV_FILE}" >&2
+  echo "       Rotate:        $(dirname "$0")/set-env-var.sh ${ENV_FILE} ANTHROPIC_API_KEY '...'" >&2
+  echo "                      then re-run $0 ${NAME} ${PORT}" >&2
+  echo "       Do not export the key in ~/.bashrc (it would be shared by every instance)." >&2
+  exit 1
+fi
+
 # Always refresh from host when provided
-ANTHROPIC_API_KEY="$HOST_ANTHROPIC"
 GOOGLE_CLIENT_ID="${HOST_GOOGLE:-${GOOGLE_CLIENT_ID:-}}"
 FRONTEND_URL="${HOST_FRONTEND:-${FRONTEND_URL:-https://agents.catch44.co.il}}"
 ADMIN_EMAIL="${HOST_ADMIN:-${ADMIN_EMAIL:-admin@catch44.co.il}}"
@@ -106,7 +118,7 @@ umask 077
 cat > "$ENV_FILE" <<EOF
 # Agents44 instance "${NAME}" — mounted at /opt/agents44/.env
 # Stable secrets persist across lightsail-start upgrades.
-# Delete this file to regenerate PSQL/Flask/dev-login secrets.
+# Delete this file to regenerate PSQL/Flask/dev-login secrets (and the Anthropic key).
 
 PSQL_HOST=localhost
 PSQL_PORT=5432
@@ -167,6 +179,7 @@ echo "  Image:     ${IMAGE}"
 echo "  URL:       ${FRONTEND_URL}"
 echo "  Health:    ${FRONTEND_URL%/}/api/health"
 echo "  Env file:  ${ENV_FILE}  ($( [ "$ENV_REUSED" -eq 1 ] && echo reused || echo created ))"
+echo "  Anthropic:  stored in ${ENV_FILE} (not ~/.bashrc)"
 echo "  Dev login: ${DEV_LOGIN_EMAIL}"
 echo "  Dev pass:  ${DEV_LOGIN_PASSWORD}"
 echo "             (from ${ENV_FILE}; frontend does not embed this password)"
