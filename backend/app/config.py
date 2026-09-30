@@ -23,7 +23,8 @@ def _database_url() -> str:
     host = os.getenv("PSQL_HOST", "localhost")
     port = os.getenv("PSQL_PORT", "5432")
     db = os.getenv("PSQL_DB", "agents44")
-    return f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db}"
+    # SQLAlchemy 2.1 made postgresql:// use psycopg v3; we ship psycopg2-binary.
+    return f"postgresql+psycopg2://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db}"
 
 
 class Config:

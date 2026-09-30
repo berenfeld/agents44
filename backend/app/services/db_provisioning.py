@@ -361,7 +361,7 @@ def agent_database_url(
 
     options = quote_plus(f"-c search_path={agent_schema},{department_schema}")
     return (
-        f"postgresql://{quote_plus(db_user)}:{quote_plus(db_password)}"
+        f"postgresql+psycopg2://{quote_plus(db_user)}:{quote_plus(db_password)}"
         f"@{host}:{port}/{database}?options={options}"
     )
 
