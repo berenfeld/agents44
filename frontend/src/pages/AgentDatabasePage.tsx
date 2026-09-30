@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import DataGrid, { SelectColumn, type Column, type RowsChangeData } from "react-data-grid";
 import {
+  Agent,
   AgentDbColumn,
   AgentDbFilterOp,
   AgentDbMeta,
@@ -9,10 +10,12 @@ import {
   AgentDbRowsQuery,
   AgentDbSchema,
   AgentDbTable,
+  Department,
   api,
 } from "@/api/client";
 import { ConfirmModal, Modal } from "@/components/ui/modal";
-import { Button, Input } from "@/components/ui/primitives";
+import { PageHeader } from "@/components/ui/page-header";
+import { Button, Input, Label } from "@/components/ui/primitives";
 import {
   DataCard,
   DataCardField,
@@ -106,7 +109,29 @@ type AgentDbPageState = {
   table: string | null;
   query: RowQueryState;
   sidebarCollapsed: boolean;
+  department: string;
+  agentId: string;
 };
+
+function slugifyIdentifier(value: string): string {
+  let slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!slug || !/^[a-z]/.test(slug)) {
+    slug = `a_${slug || "agent"}`;
+  }
+  return slug.slice(0, 128);
+}
+
+function agentSchemaName(agentName: string): string {
+  return `agent_${slugifyIdentifier(agentName)}`;
+}
+
+function departmentSchemaName(department: string): string {
+  return department.trim().toLowerCase();
+}
 
 function parseAgentDbSearchParams(searchParams: URLSearchParams): AgentDbPageState {
   const query = defaultQueryState();
@@ -145,10 +170,18 @@ function parseAgentDbSearchParams(searchParams: URLSearchParams): AgentDbPageSta
     table: searchParams.get("table"),
     query,
     sidebarCollapsed: searchParams.get("sidebar") === "collapsed",
+    department: searchParams.get("department") ?? "",
+    agentId: searchParams.get("agent_id") ?? "",
   };
 }
 
-function buildAgentDbSearchParams({ table, query, sidebarCollapsed }: AgentDbPageState): URLSearchParams {
+function buildAgentDbSearchParams({
+  table,
+  query,
+  sidebarCollapsed,
+  department,
+  agentId,
+}: AgentDbPageState): URLSearchParams {
   const params = new URLSearchParams();
   if (table) {
     params.set("table", table);
@@ -174,6 +207,12 @@ function buildAgentDbSearchParams({ table, query, sidebarCollapsed }: AgentDbPag
   }
   if (sidebarCollapsed) {
     params.set("sidebar", "collapsed");
+  }
+  if (department) {
+    params.set("department", department);
+  }
+  if (agentId) {
+    params.set("agent_id", agentId);
   }
   return params;
 }
@@ -376,6 +415,9 @@ function selectClassName(className?: string) {
     className,
   );
 }
+
+const HEADER_FILTER_SELECT_CLASS =
+  "h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 sm:w-auto sm:min-w-[12rem]";
 
 function ToolbarIconButton({
   title,
@@ -617,13 +659,19 @@ function ToolbarDivider({ className }: { className?: string }) {
 
 export default function AgentDatabasePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { table: selectedTable, query, sidebarCollapsed } = useMemo(
-    () => parseAgentDbSearchParams(searchParams),
-    [searchParams],
-  );
+  const {
+    table: selectedTable,
+    query,
+    sidebarCollapsed,
+    department: departmentFilter,
+    agentId: agentFilter,
+  } = useMemo(() => parseAgentDbSearchParams(searchParams), [searchParams]);
 
   const [dbMeta, setDbMeta] = useState<AgentDbMeta | null>(null);
   const [tables, setTables] = useState<AgentDbTable[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [catalogReady, setCatalogReady] = useState(false);
   const [schema, setSchema] = useState<AgentDbSchema | null>(null);
   const [rows, setRows] = useState<GridRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -650,14 +698,24 @@ export default function AgentDatabasePage() {
   const hasSavedColumnWidths = useRef(false);
   const denseWidthsKeyRef = useRef<string | null>(null);
 
-  const setTableAndQuery = useCallback(
-    (table: string | null, nextQuery: RowQueryState, options?: { replace?: boolean }) => {
+  const setPageState = useCallback(
+    (patch: Partial<AgentDbPageState>, options?: { replace?: boolean }) => {
       setSearchParams(
-        buildAgentDbSearchParams({ table, query: nextQuery, sidebarCollapsed }),
+        (current) => {
+          const parsed = parseAgentDbSearchParams(current);
+          return buildAgentDbSearchParams({ ...parsed, ...patch });
+        },
         { replace: options?.replace ?? true },
       );
     },
-    [setSearchParams, sidebarCollapsed],
+    [setSearchParams],
+  );
+
+  const setTableAndQuery = useCallback(
+    (table: string | null, nextQuery: RowQueryState, options?: { replace?: boolean }) => {
+      setPageState({ table, query: nextQuery }, options);
+    },
+    [setPageState],
   );
 
   const patchQuery = useCallback(
@@ -676,15 +734,55 @@ export default function AgentDatabasePage() {
     setDbMeta(metaRes.data);
   }, []);
 
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const department of departments) {
+      names.add(department.name);
+    }
+    for (const agent of agents) {
+      names.add(agent.department);
+    }
+    if (departmentFilter) {
+      names.add(departmentFilter);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [agents, departmentFilter, departments]);
+
+  const agentOptions = useMemo(() => {
+    if (!departmentFilter) return agents;
+    return agents.filter((agent) => agent.department === departmentFilter);
+  }, [agents, departmentFilter]);
+
+  const filteredTables = useMemo(() => {
+    if (!catalogReady || (!departmentFilter && !agentFilter)) {
+      return tables;
+    }
+    const selectedAgent = agentFilter
+      ? agents.find((agent) => String(agent.id) === agentFilter)
+      : undefined;
+    const allowedSchemas = new Set<string>();
+    if (selectedAgent) {
+      allowedSchemas.add(agentSchemaName(selectedAgent.name));
+    } else if (departmentFilter) {
+      allowedSchemas.add(departmentSchemaName(departmentFilter));
+      for (const agent of agents) {
+        if (agent.department === departmentFilter) {
+          allowedSchemas.add(agentSchemaName(agent.name));
+        }
+      }
+    }
+    return tables.filter((table) => allowedSchemas.has(table.schema.toLowerCase()));
+  }, [agentFilter, agents, catalogReady, departmentFilter, tables]);
+
   const tablesBySchema = useMemo(() => {
     const grouped = new Map<string, AgentDbTable[]>();
-    for (const table of tables) {
+    for (const table of filteredTables) {
       const items = grouped.get(table.schema) ?? [];
       items.push(table);
       grouped.set(table.schema, items);
     }
     return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [tables]);
+  }, [filteredTables]);
 
   const loadTableData = useCallback(async (tableName: string, rowQuery: RowQueryState) => {
     setLoading(true);
@@ -713,22 +811,47 @@ export default function AgentDatabasePage() {
   }, []);
 
   useEffect(() => {
-    loadTables().catch(console.error);
+    let cancelled = false;
+    (async () => {
+      try {
+        await loadTables();
+        const [agentsRes, deptsRes] = await Promise.all([
+          api.get<Agent[]>("/agents"),
+          api.get<Department[]>("/departments"),
+        ]);
+        if (cancelled) return;
+        setAgents(agentsRes.data);
+        setDepartments(deptsRes.data);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (!cancelled) setCatalogReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadTables]);
 
   useEffect(() => {
-    if (tables.length === 0) {
+    if (!catalogReady) {
       return;
     }
     const { table: urlTable, query: urlQuery } = parseAgentDbSearchParams(searchParams);
-    if (!urlTable) {
-      setTableAndQuery(tables[0].qualified_name, urlQuery, { replace: true });
+    if (filteredTables.length === 0) {
+      if (urlTable) {
+        setTableAndQuery(null, urlQuery, { replace: true });
+      }
       return;
     }
-    if (!tables.some((table) => table.qualified_name === urlTable)) {
-      setTableAndQuery(tables[0].qualified_name, urlQuery, { replace: true });
+    if (!urlTable) {
+      setTableAndQuery(filteredTables[0].qualified_name, urlQuery, { replace: true });
+      return;
     }
-  }, [tables, searchParams, setTableAndQuery]);
+    if (!filteredTables.some((table) => table.qualified_name === urlTable)) {
+      setTableAndQuery(filteredTables[0].qualified_name, urlQuery, { replace: true });
+    }
+  }, [catalogReady, filteredTables, searchParams, setTableAndQuery]);
 
   useEffect(() => {
     setDraftFilter({
@@ -741,8 +864,16 @@ export default function AgentDatabasePage() {
   useEffect(() => {
     if (selectedTable) {
       loadTableData(selectedTable, query).catch(console.error);
+      return;
     }
-  }, [selectedTable, query, loadTableData]);
+    setSchema(null);
+    setRows([]);
+    setTotal(0);
+    setSelectedRows(new Set());
+    if (catalogReady) {
+      setLoading(false);
+    }
+  }, [catalogReady, selectedTable, query, loadTableData]);
 
   useEffect(() => {
     if (!schema || !selectedTable || schema.qualified_name !== selectedTable) {
@@ -852,15 +983,22 @@ export default function AgentDatabasePage() {
   }, [rows, schema, selectedTable, visibleColumns]);
 
   const toggleSidebar = useCallback(() => {
-    setSearchParams(
-      buildAgentDbSearchParams({
-        table: selectedTable,
-        query,
-        sidebarCollapsed: !sidebarCollapsed,
-      }),
-      { replace: true },
-    );
-  }, [query, selectedTable, setSearchParams, sidebarCollapsed]);
+    setPageState({ sidebarCollapsed: !sidebarCollapsed });
+  }, [setPageState, sidebarCollapsed]);
+
+  const applyCatalogFilters = useCallback(
+    (nextDepartment: string, nextAgentId: string) => {
+      let agentId = nextAgentId;
+      if (agentId && nextDepartment) {
+        const agent = agents.find((row) => String(row.id) === agentId);
+        if (agent && agent.department !== nextDepartment) {
+          agentId = "";
+        }
+      }
+      setPageState({ department: nextDepartment, agentId });
+    },
+    [agents, setPageState],
+  );
 
   useEffect(() => {
     const timers = saveTimers.current;
@@ -1072,7 +1210,7 @@ export default function AgentDatabasePage() {
     setError(null);
     try {
       await api.delete(tableApiPath(droppedName));
-      const remaining = tables.filter((table) => table.qualified_name !== droppedName);
+      const remaining = filteredTables.filter((table) => table.qualified_name !== droppedName);
       await loadTables();
       if (selectedTable === droppedName) {
         setTableAndQuery(remaining[0]?.qualified_name ?? null, defaultQueryState());
@@ -1270,22 +1408,66 @@ export default function AgentDatabasePage() {
           </div>
         );
         })}
-        {tables.length === 0 ? <p className="text-sm text-slate-500">No tables yet</p> : null}
+        {filteredTables.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            {tables.length === 0 ? "No tables yet" : "No tables match the current filters"}
+          </p>
+        ) : null}
       </div>
     </PanelCard>
   );
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-        <h1 className="text-2xl font-semibold">Database</h1>
-        {dbMeta ? (
-          <p className="text-xs text-slate-500">
-            PostgreSQL {dbMeta.version} · {dbMeta.table_count} {dbMeta.table_count === 1 ? "table" : "tables"} ·{" "}
-            {formatDataSize(dbMeta.total_size_bytes)}
-          </p>
-        ) : null}
-      </div>
+      <PageHeader
+        title="Database"
+        filters={
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <Label htmlFor="database-department-filter" className="sr-only">
+              Department
+            </Label>
+            <select
+              id="database-department-filter"
+              aria-label="Filter by department"
+              className={HEADER_FILTER_SELECT_CLASS}
+              value={departmentFilter}
+              onChange={(event) => applyCatalogFilters(event.target.value, agentFilter)}
+            >
+              <option value="">All departments</option>
+              {departmentOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <Label htmlFor="database-agent-filter" className="sr-only">
+              Agent
+            </Label>
+            <select
+              id="database-agent-filter"
+              aria-label="Filter by agent"
+              className={HEADER_FILTER_SELECT_CLASS}
+              value={agentFilter}
+              onChange={(event) => applyCatalogFilters(departmentFilter, event.target.value)}
+            >
+              <option value="">All agents</option>
+              {agentOptions.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+        actions={
+          dbMeta ? (
+            <p className="text-xs text-slate-500">
+              PostgreSQL {dbMeta.version} · {dbMeta.table_count} {dbMeta.table_count === 1 ? "table" : "tables"} ·{" "}
+              {formatDataSize(dbMeta.total_size_bytes)}
+            </p>
+          ) : null
+        }
+      />
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
 
@@ -1303,10 +1485,12 @@ export default function AgentDatabasePage() {
                 value={selectedTable ?? ""}
                 onChange={(event) => setTableAndQuery(event.target.value, defaultQueryState())}
                 className={selectClassName()}
-                disabled={tables.length === 0}
+                disabled={filteredTables.length === 0}
               >
                 {tablePickerOptions.length === 0 ? (
-                  <option value="">No tables yet</option>
+                  <option value="">
+                    {tables.length === 0 ? "No tables yet" : "No tables match the current filters"}
+                  </option>
                 ) : (
                   tablePickerOptions.map((option) => (
                     <option key={option.value} value={option.value}>
