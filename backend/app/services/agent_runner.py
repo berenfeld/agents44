@@ -23,6 +23,7 @@ from app.services.params import (
     get_timeout_sigkill_grace_seconds,
     get_timeout_sigterm_grace_seconds,
 )
+from app.services.timeout import format_remaining_duration, format_timeout_seconds
 from app.services.whatsapp import build_whatsapp_instructions
 from app.services.workspace import (
     build_memory_instructions,
@@ -318,6 +319,32 @@ def build_system_tools_instructions(agent_name: str, department: str) -> str:
     )
 
 
+def build_timeout_instructions(
+    timeout_seconds: int,
+    soft_cancel_grace_seconds: int,
+    *,
+    require_run_summary: bool,
+) -> str:
+    soft_cancel_at = max(1, int(timeout_seconds)) + max(0, int(soft_cancel_grace_seconds))
+    lines = [
+        "# Time limit",
+        "",
+        f"Configured timeout: {format_timeout_seconds(timeout_seconds)} ({timeout_seconds}s).",
+        f"Soft cancel ends this run after {format_remaining_duration(soft_cancel_at)} "
+        f"from start ({timeout_seconds}s + {soft_cancel_grace_seconds}s grace).",
+        "After soft cancel you will not get another model turn.",
+        "Each model request includes the time remaining until soft cancel.",
+    ]
+    if require_run_summary:
+        lines.append(
+            "If less than one minute remains, write summary.md immediately and finish — "
+            "do not start new work."
+        )
+    else:
+        lines.append("If less than one minute remains, finish your reply promptly.")
+    return "\n".join(lines)
+
+
 def build_run_summary_instructions(summary_path: str) -> str:
     return "\n".join(
         [
@@ -326,7 +353,8 @@ def build_run_summary_instructions(summary_path: str) -> str:
             "Before you finish this run, you MUST write a markdown summary to this exact path:",
             f"`{summary_path}`",
             "",
-            "If the run is interrupted by a shutdown signal, write the summary immediately before exiting.",
+            "If soft cancel is near (less than one minute remaining), write the summary immediately and stop other work.",
+            "After soft cancel you will not get another turn to write it.",
             "",
             "Use the `write_workspace` tool with that path and filename `summary.md`.",
             "The summary should be concise and include:",
@@ -345,13 +373,27 @@ def build_run_summary_instructions(summary_path: str) -> str:
     )
 
 
-def build_prompt(agent: SystemAgent, payload: dict | None = None, *, summary_path: str | None = None) -> str:
+def build_prompt(
+    agent: SystemAgent,
+    payload: dict | None = None,
+    *,
+    summary_path: str | None = None,
+    timeout_seconds: int,
+    soft_cancel_grace_seconds: int,
+) -> str:
     lines = [
         "# Agent configuration",
         f"Name: {agent.name}",
         f"Department: {agent.department}",
         f"Model: {agent.model}",
         f"Cron: {agent.crond or '(none)'}",
+        f"Timeout: {format_timeout_seconds(timeout_seconds)} ({timeout_seconds}s)",
+        "",
+        build_timeout_instructions(
+            timeout_seconds,
+            soft_cancel_grace_seconds,
+            require_run_summary=summary_path is not None,
+        ),
         "",
         build_system_tools_instructions(agent.name, agent.department),
         "",
@@ -461,12 +503,17 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         db.session.commit()
 
         log_path = safe_path(paths["log_path"])
-        prompt = build_prompt(agent, payload, summary_path=paths["summary_path"])
-        safe_path(paths["prompt_path"]).write_text(prompt, encoding="utf-8")
-
         timeout_seconds = agent.timeout_seconds or 300
         sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
         sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
+        prompt = build_prompt(
+            agent,
+            payload,
+            summary_path=paths["summary_path"],
+            timeout_seconds=timeout_seconds,
+            soft_cancel_grace_seconds=sigterm_grace_seconds,
+        )
+        safe_path(paths["prompt_path"]).write_text(prompt, encoding="utf-8")
         cwd = str(workspace_root())
         start_context = _run_start_context(
             run,

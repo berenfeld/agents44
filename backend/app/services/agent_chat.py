@@ -14,7 +14,7 @@ from app.models import (
     SystemAgentChatMessage,
 )
 from app.models.agent_chat_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
-from app.services.agent_runner import build_system_tools_instructions
+from app.services.agent_runner import build_system_tools_instructions, build_timeout_instructions
 from app.services.agent_runtime import AgentRuntime
 from app.services.agent_runtime.runtime import cancel_active_handle, get_active_handle
 from app.services.db_provisioning import build_agent_db_instructions
@@ -23,6 +23,7 @@ from app.services.params import (
     get_timeout_sigkill_grace_seconds,
     get_timeout_sigterm_grace_seconds,
 )
+from app.services.timeout import format_timeout_seconds
 from app.services.whatsapp import build_whatsapp_instructions
 from app.services.workspace import build_memory_instructions, read_prompt_inputs, workspace_root
 
@@ -78,12 +79,25 @@ def pending_ids_by_conversation(conversation_ids: list[int]) -> set[int]:
     return {row[0] for row in rows}
 
 
-def build_chat_prompt(agent: SystemAgent, messages: list[SystemAgentChatMessage]) -> str:
+def build_chat_prompt(
+    agent: SystemAgent,
+    messages: list[SystemAgentChatMessage],
+    *,
+    timeout_seconds: int,
+    soft_cancel_grace_seconds: int,
+) -> str:
     lines = [
         "# Agent configuration",
         f"Name: {agent.name}",
         f"Department: {agent.department}",
         f"Model: {agent.model}",
+        f"Timeout: {format_timeout_seconds(timeout_seconds)} ({timeout_seconds}s)",
+        "",
+        build_timeout_instructions(
+            timeout_seconds,
+            soft_cancel_grace_seconds,
+            require_run_summary=False,
+        ),
         "",
         build_system_tools_instructions(agent.name, agent.department),
         "",
@@ -170,11 +184,15 @@ def _execute_chat(assistant_message_id: int) -> None:
             .order_by(SystemAgentChatMessage.id.asc())
             .all()
         )
-        prompt = build_chat_prompt(agent, history)
-
         timeout_seconds = agent.timeout_seconds or 300
         sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
         sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
+        prompt = build_chat_prompt(
+            agent,
+            history,
+            timeout_seconds=timeout_seconds,
+            soft_cancel_grace_seconds=sigterm_grace_seconds,
+        )
         cwd = str(workspace_root())
 
         logger.info(

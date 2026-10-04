@@ -115,6 +115,17 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> d
     ):
         if key in body and body[key] is not None:
             kwargs[key] = body[key]
+    # Pydantic AI streams with stream_options.include_usage=True. LiteLLM only emits
+    # token usage on the final SSE chunk when that flag is set — without it Gemini
+    # (and other providers) complete successfully with empty tokens/cost.
+    if stream:
+        stream_options = body.get("stream_options")
+        if isinstance(stream_options, dict):
+            merged = dict(stream_options)
+            merged.setdefault("include_usage", True)
+            kwargs["stream_options"] = merged
+        else:
+            kwargs["stream_options"] = {"include_usage": True}
     return kwargs
 
 

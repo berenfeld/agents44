@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from flask import current_app
-from pydantic_ai import Agent, CancellationToken
+from pydantic_ai import Agent, CancellationToken, RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -20,10 +20,34 @@ from app.services.agent_runtime.deps import RuntimeDeps
 from app.services.agent_runtime.gateway import LlmGateway
 from app.services.agent_runtime.shell_tool import build_shell_tool
 from app.services.model_registry import estimate_cost, normalize_model_id
+from app.services.timeout import format_remaining_duration
 
 logger = logging.getLogger(__name__)
 
 _TOOL_RESULT_MAX_CHARS = 4000
+_WRAP_UP_SECONDS = 60
+
+
+def _time_remaining_instruction(ctx: RunContext[RuntimeDeps]) -> str:
+    """Recomputed before every model request with wall-clock time left until soft cancel."""
+    deadline = ctx.deps.soft_cancel_deadline_monotonic
+    if deadline <= 0:
+        return ""
+    remaining = int(deadline - time.monotonic())
+    label = format_remaining_duration(remaining)
+    lines = [f"Time remaining until soft cancel: {label}."]
+    if remaining < _WRAP_UP_SECONDS:
+        if ctx.deps.require_run_summary:
+            lines.append(
+                "Less than one minute remains — write summary.md now and finish. "
+                "Do not start new work; soft cancel will end this run with no further turn."
+            )
+        else:
+            lines.append(
+                "Less than one minute remains — finish your reply now. "
+                "Soft cancel will end this run with no further turn."
+            )
+    return "\n".join(lines)
 
 
 def _coerce_tool_args(args: Any) -> Any:
@@ -248,6 +272,14 @@ class AgentRuntime:
             retries=2,
         )
 
+        @agent.instructions
+        def _inject_time_remaining(ctx: RunContext[RuntimeDeps]) -> str:
+            return _time_remaining_instruction(ctx)
+
+        soft_at = max(1, int(timeout_seconds)) + max(0, int(soft_cancel_grace_seconds))
+        hard_at = max(soft_at, int(timeout_seconds) + max(0, int(hard_timeout_grace_seconds)))
+        started = time.monotonic()
+
         deps = RuntimeDeps(
             agent_name=agent_name,
             department=department,
@@ -256,6 +288,10 @@ class AgentRuntime:
             cwd=cwd,
             shell_env=os.environ.copy(),
             on_event=on_event,
+            started_monotonic=started,
+            soft_cancel_deadline_monotonic=started + soft_at,
+            # Scheduled/manual agent runs require summary.md; operator chat does not.
+            require_run_summary=conversation_id is None,
         )
 
         transcript_parts: list[str] = []
@@ -267,7 +303,6 @@ class AgentRuntime:
                     transcript_parts.append(line)
                     on_event(line)
 
-        started = time.monotonic()
         cancelled = False
         timed_out = False
         soft_cancelled = False
@@ -276,9 +311,6 @@ class AgentRuntime:
         tokens_in: int | None = None
         tokens_out: int | None = None
         cost: float | None = None
-
-        soft_at = max(1, int(timeout_seconds)) + max(0, int(soft_cancel_grace_seconds))
-        hard_at = max(soft_at, int(timeout_seconds) + max(0, int(hard_timeout_grace_seconds)))
 
         async def _soft_cancel_watch() -> None:
             nonlocal soft_cancelled
