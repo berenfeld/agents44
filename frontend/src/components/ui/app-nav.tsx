@@ -1,22 +1,60 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
-  { to: "/claude", label: "Claude", match: (path: string) => path.startsWith("/claude") },
+function ChatIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      className={cn("h-4 w-4 shrink-0", className)}
+      aria-hidden="true"
+    >
+      <path
+        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+const NAV_ITEMS: {
+  to: string;
+  label: string;
+  match: (path: string) => boolean;
+  icon?: ReactNode;
+}[] = [
+  {
+    to: "/chat",
+    label: "Chat With Agent",
+    match: (path: string) => path.startsWith("/chat") || path.startsWith("/claude"),
+    icon: <ChatIcon />,
+  },
   { to: "/whatsapp", label: "WhatsApp", match: (path: string) => path.startsWith("/whatsapp") },
   { to: "/emails", label: "Emails", match: (path: string) => path.startsWith("/emails") },
   { to: "/agents", label: "Agents", match: (path: string) => path === "/agents" },
-  { to: "/agents_runs", label: "Agents Runs", match: (path: string) => path.startsWith("/agents_runs") || path.startsWith("/runs") },
+  {
+    to: "/agents_runs",
+    label: "Agents Runs",
+    match: (path: string) => path.startsWith("/agents_runs") || path.startsWith("/runs"),
+  },
   { to: "/departments", label: "Departments", match: (path: string) => path.startsWith("/departments") },
-  { to: "/agents_files", label: "Files", match: (path: string) => path.startsWith("/agents_files") || path.startsWith("/files") },
+  {
+    to: "/agents_files",
+    label: "Files",
+    match: (path: string) => path.startsWith("/agents_files") || path.startsWith("/files"),
+  },
   { to: "/agent_database", label: "Database", match: (path: string) => path.startsWith("/agent_database") },
   { to: "/settings", label: "Settings", match: (path: string) => path.startsWith("/settings") },
-] as const;
+];
 
 function linkClass(isActive: boolean) {
   return cn(
-    "block rounded-md px-3 py-2 text-sm transition-colors",
+    "inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors",
     isActive ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100",
   );
 }
@@ -83,6 +121,7 @@ export function AppNav() {
       <nav className="hidden items-center gap-1 md:flex">
         {NAV_ITEMS.map((item) => (
           <NavLink key={item.to} to={item.to} className={({ isActive }) => linkClass(isActive)}>
+            {item.icon}
             {item.label}
           </NavLink>
         ))}
@@ -96,9 +135,12 @@ export function AppNav() {
           className="inline-flex w-full min-w-[10rem] items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm"
           onClick={() => setOpen((value) => !value)}
         >
-          <span className="inline-flex items-center gap-2 truncate">
+          <span className="inline-flex min-w-0 items-center gap-2 truncate">
             <MenuIcon />
-            <span className="truncate">{current.label}</span>
+            <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+              {current.icon}
+              <span className="truncate">{current.label}</span>
+            </span>
           </span>
           <ChevronDownIcon open={open} />
         </button>
@@ -119,6 +161,7 @@ export function AppNav() {
                   className={cn("mx-1 block", linkClass(isActive))}
                   onClick={() => setOpen(false)}
                 >
+                  {item.icon}
                   {item.label}
                 </NavLink>
               );

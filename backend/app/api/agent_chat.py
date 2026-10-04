@@ -5,9 +5,9 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.extensions import db
-from app.models import SystemAgent, SystemClaudeConversation
-from app.models.claude_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
-from app.services.claude_chat import (
+from app.models import SystemAgent, SystemAgentChatConversation
+from app.models.agent_chat_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
+from app.services.agent_chat import (
     archive_conversation,
     conversation_is_busy,
     create_conversation,
@@ -17,7 +17,7 @@ from app.services.claude_chat import (
     unarchive_conversation,
 )
 
-claude_bp = Blueprint("claude", __name__)
+agent_chat_bp = Blueprint("agent_chat", __name__)
 
 
 class ConversationCreateSchema(Schema):
@@ -52,11 +52,11 @@ class ChatMessageSchema(Schema):
         return payload
 
 
-def _conversation_or_404(conversation_id: int) -> SystemClaudeConversation:
+def _conversation_or_404(conversation_id: int) -> SystemAgentChatConversation:
     conversation = (
-        SystemClaudeConversation.query.options(
-            joinedload(SystemClaudeConversation.agent),
-            selectinload(SystemClaudeConversation.messages),
+        SystemAgentChatConversation.query.options(
+            joinedload(SystemAgentChatConversation.agent),
+            selectinload(SystemAgentChatConversation.messages),
         )
         .filter_by(id=conversation_id)
         .first()
@@ -71,26 +71,26 @@ def _parse_archived_flag() -> bool:
     return raw in {"1", "true", "yes"}
 
 
-@claude_bp.get("/conversations")
+@agent_chat_bp.get("/conversations")
 @api_endpoint
 @login_required
 def list_conversations():
     archived = _parse_archived_flag()
-    query = SystemClaudeConversation.query.options(joinedload(SystemClaudeConversation.agent))
+    query = SystemAgentChatConversation.query.options(joinedload(SystemAgentChatConversation.agent))
     if archived:
-        query = query.filter(SystemClaudeConversation.archived_at.isnot(None)).order_by(
-            SystemClaudeConversation.archived_at.desc()
+        query = query.filter(SystemAgentChatConversation.archived_at.isnot(None)).order_by(
+            SystemAgentChatConversation.archived_at.desc()
         )
     else:
-        query = query.filter(SystemClaudeConversation.archived_at.is_(None)).order_by(
-            SystemClaudeConversation.id.asc()
+        query = query.filter(SystemAgentChatConversation.archived_at.is_(None)).order_by(
+            SystemAgentChatConversation.id.asc()
         )
     conversations = query.all()
     busy_ids = pending_ids_by_conversation([row.id for row in conversations])
     return jsonify([row.to_dict(busy=row.id in busy_ids) for row in conversations])
 
 
-@claude_bp.post("/conversations")
+@agent_chat_bp.post("/conversations")
 @api_endpoint
 @login_required
 def create_conversation_route():
@@ -107,7 +107,7 @@ def create_conversation_route():
     return jsonify(conversation.to_dict(include_messages=True, busy=False)), 201
 
 
-@claude_bp.get("/conversations/<int:conversation_id>")
+@agent_chat_bp.get("/conversations/<int:conversation_id>")
 @api_endpoint
 @login_required
 def get_conversation(conversation_id: int):
@@ -115,7 +115,7 @@ def get_conversation(conversation_id: int):
     return jsonify(conversation.to_dict(include_messages=True))
 
 
-@claude_bp.patch("/conversations/<int:conversation_id>")
+@agent_chat_bp.patch("/conversations/<int:conversation_id>")
 @api_endpoint
 @login_required
 def update_conversation(conversation_id: int):
@@ -128,7 +128,7 @@ def update_conversation(conversation_id: int):
         if not agent:
             raise APIClientError("Agent not found", 404)
         if conversation_is_busy(conversation.id):
-            raise APIClientError("Claude is still responding", 409)
+            raise APIClientError("Agent is still responding", 409)
         conversation.agent_id = agent.id
         conversation.agent_name = agent.name
     if "title" in data:
@@ -138,7 +138,7 @@ def update_conversation(conversation_id: int):
     return jsonify(conversation.to_dict(include_messages=True))
 
 
-@claude_bp.post("/conversations/<int:conversation_id>/archive")
+@agent_chat_bp.post("/conversations/<int:conversation_id>/archive")
 @api_endpoint
 @login_required
 def archive_conversation_route(conversation_id: int):
@@ -149,7 +149,7 @@ def archive_conversation_route(conversation_id: int):
     return jsonify(conversation.to_dict(include_messages=True))
 
 
-@claude_bp.post("/conversations/<int:conversation_id>/unarchive")
+@agent_chat_bp.post("/conversations/<int:conversation_id>/unarchive")
 @api_endpoint
 @login_required
 def unarchive_conversation_route(conversation_id: int):
@@ -160,7 +160,7 @@ def unarchive_conversation_route(conversation_id: int):
     return jsonify(conversation.to_dict(include_messages=True))
 
 
-@claude_bp.post("/conversations/<int:conversation_id>/messages")
+@agent_chat_bp.post("/conversations/<int:conversation_id>/messages")
 @api_endpoint
 @login_required
 def post_message(conversation_id: int):
@@ -171,7 +171,7 @@ def post_message(conversation_id: int):
     return jsonify(conversation.to_dict(include_messages=True)), 202
 
 
-@claude_bp.post("/conversations/<int:conversation_id>/stop")
+@agent_chat_bp.post("/conversations/<int:conversation_id>/stop")
 @api_endpoint
 @login_required
 def stop_conversation(conversation_id: int):

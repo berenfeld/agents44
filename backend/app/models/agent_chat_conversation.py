@@ -14,18 +14,18 @@ DEFAULT_CONVERSATION_TITLE = "New conversation"
 MAX_CONVERSATION_TITLE_LEN = 128
 
 
-class ClaudeMessageRole(str, enum.Enum):
+class AgentChatMessageRole(str, enum.Enum):
     user = "user"
     assistant = "assistant"
 
 
-class ClaudeMessageStatus(str, enum.Enum):
+class AgentChatMessageStatus(str, enum.Enum):
     pending = "pending"
     complete = "complete"
     failed = "failed"
 
 
-class SystemClaudeConversation(db.Model):
+class SystemAgentChatConversation(db.Model):
     __tablename__ = "system_claude_conversations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -42,14 +42,14 @@ class SystemClaudeConversation(db.Model):
     )
 
     agent: Mapped["SystemAgent | None"] = relationship()
-    messages: Mapped[list["SystemClaudeMessage"]] = relationship(
+    messages: Mapped[list["SystemAgentChatMessage"]] = relationship(
         back_populates="conversation",
-        order_by="SystemClaudeMessage.id",
+        order_by="SystemAgentChatMessage.id",
     )
 
     def to_dict(self, *, include_messages: bool = False, busy: bool | None = None) -> dict:
         if busy is None:
-            busy = any(message.status == ClaudeMessageStatus.pending for message in self.messages)
+            busy = any(message.status == AgentChatMessageStatus.pending for message in self.messages)
         payload = {
             "id": self.id,
             "title": self.title,
@@ -68,25 +68,25 @@ class SystemClaudeConversation(db.Model):
         return payload
 
 
-class SystemClaudeMessage(db.Model):
+class SystemAgentChatMessage(db.Model):
     __tablename__ = "system_claude_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     conversation_id: Mapped[int] = mapped_column(
         ForeignKey("system_claude_conversations.id"), nullable=False, index=True
     )
-    role: Mapped[ClaudeMessageRole] = mapped_column(
-        Enum(ClaudeMessageRole, name="claudemessagerole", values_callable=lambda items: [item.value for item in items]),
+    role: Mapped[AgentChatMessageRole] = mapped_column(
+        Enum(AgentChatMessageRole, name="claudemessagerole", values_callable=lambda items: [item.value for item in items]),
         nullable=False,
     )
-    status: Mapped[ClaudeMessageStatus] = mapped_column(
+    status: Mapped[AgentChatMessageStatus] = mapped_column(
         Enum(
-            ClaudeMessageStatus,
+            AgentChatMessageStatus,
             name="claudemessagestatus",
             values_callable=lambda items: [item.value for item in items],
         ),
         nullable=False,
-        default=ClaudeMessageStatus.complete,
+        default=AgentChatMessageStatus.complete,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -96,7 +96,7 @@ class SystemClaudeMessage(db.Model):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    conversation: Mapped["SystemClaudeConversation"] = relationship(back_populates="messages")
+    conversation: Mapped["SystemAgentChatConversation"] = relationship(back_populates="messages")
 
     def to_dict(self) -> dict:
         return {

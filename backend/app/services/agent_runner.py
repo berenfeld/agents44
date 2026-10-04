@@ -232,7 +232,6 @@ def _write_run_log_finish(
     log_path: Path,
     *,
     returncode: int,
-    transcript: str,
     duration_seconds: float,
     status: RunStatus,
     tokens_in: int | None = None,
@@ -243,10 +242,7 @@ def _write_run_log_finish(
 ) -> None:
     with open(log_path, "a", encoding="utf-8") as log_file:
         log_file.write("\n=== STDERR ===\n(empty)\n")
-        if transcript:
-            log_file.write("\n=== TRANSCRIPT ===\n")
-            log_file.write(transcript)
-            log_file.write("\n")
+        # Events are already streamed into === STDOUT === via on_event — no transcript replay.
         log_file.write("=== RUN END ===\n")
         log_file.write(f"status: {status.value}\n")
         log_file.write(f"exit_code: {returncode}\n")
@@ -568,7 +564,6 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         _write_run_log_finish(
             log_path,
             returncode=returncode,
-            transcript=result.transcript,
             duration_seconds=duration_seconds,
             status=status,
             tokens_in=tokens_in,

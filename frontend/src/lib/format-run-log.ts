@@ -406,6 +406,7 @@ function formatStdoutSection(lines: string[]): string {
     }
 
     if (data) {
+      // Legacy Claude CLI stream-json lines only — AgentRuntime logs are plain text from the backend.
       const formatted = formatJsonLine(trimmed, state);
       if (formatted) {
         flushStreamBuffers(output, state);
@@ -464,6 +465,7 @@ export function formatRunLog(content: string): string {
   const hasFormattedEvents = formattedStdout.split("\n").some((line) => line.startsWith("---") || line.startsWith("["));
 
   let tail = afterStdout;
+  // Hide legacy Claude "thinking + text" transcript when STDOUT already has formatted events.
   if (hasFormattedEvents && tail.includes("=== TRANSCRIPT (thinking + text) ===")) {
     const transcriptStart = tail.indexOf("=== TRANSCRIPT (thinking + text) ===");
     const afterTranscript = findNextSectionIndex(tail, transcriptStart + 1);

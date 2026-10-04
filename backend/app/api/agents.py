@@ -7,7 +7,7 @@ from sqlalchemy import func
 from app.auth import login_required
 from app.errors import APIClientError, api_endpoint
 from app.extensions import db
-from app.models import SystemAgent, SystemAgentRun, SystemClaudeConversation, SystemDepartment, SystemEmailMessage, SystemWhatsAppConversation
+from app.models import SystemAgent, SystemAgentRun, SystemAgentChatConversation, SystemDepartment, SystemEmailMessage, SystemWhatsAppConversation
 from app.models.run_status import RunStatus
 from app.services.model_registry import normalize_model_id, validate_model
 from app.services.scheduler import sync_scheduler_jobs
@@ -184,7 +184,7 @@ def update_agent(agent_id: int):
 
 def _detach_agent_history(agent: SystemAgent) -> None:
     now = datetime.now(timezone.utc)
-    conversations = SystemClaudeConversation.query.filter_by(agent_id=agent.id).all()
+    conversations = SystemAgentChatConversation.query.filter_by(agent_id=agent.id).all()
     for conversation in conversations:
         if conversation.archived_at is None:
             conversation.archived_at = now

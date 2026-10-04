@@ -7,13 +7,13 @@ from datetime import datetime, timezone
 from app.errors import APIClientError
 from app.extensions import db
 from app.models import (
-    ClaudeMessageRole,
-    ClaudeMessageStatus,
+    AgentChatMessageRole,
+    AgentChatMessageStatus,
     SystemAgent,
-    SystemClaudeConversation,
-    SystemClaudeMessage,
+    SystemAgentChatConversation,
+    SystemAgentChatMessage,
 )
-from app.models.claude_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
+from app.models.agent_chat_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
 from app.services.agent_runner import build_system_tools_instructions
 from app.services.agent_runtime import AgentRuntime
 from app.services.agent_runtime.runtime import cancel_active_handle, get_active_handle
@@ -33,7 +33,7 @@ _worker_started = False
 _manual_stop_requested: set[int] = set()
 _manual_stop_lock = threading.Lock()
 
-CHAT_FAILED_MESSAGE = "Claude failed to reply"
+CHAT_FAILED_MESSAGE = "Agent failed to reply"
 TITLE_PREVIEW_CHARS = 48
 
 
@@ -57,9 +57,9 @@ def _consume_manual_stop_request(message_id: int) -> bool:
 
 
 def conversation_is_busy(conversation_id: int) -> bool:
-    pending = SystemClaudeMessage.query.filter_by(
+    pending = SystemAgentChatMessage.query.filter_by(
         conversation_id=conversation_id,
-        status=ClaudeMessageStatus.pending,
+        status=AgentChatMessageStatus.pending,
     ).first()
     return pending is not None
 
@@ -68,17 +68,17 @@ def pending_ids_by_conversation(conversation_ids: list[int]) -> set[int]:
     if not conversation_ids:
         return set()
     rows = (
-        db.session.query(SystemClaudeMessage.conversation_id)
+        db.session.query(SystemAgentChatMessage.conversation_id)
         .filter(
-            SystemClaudeMessage.conversation_id.in_(conversation_ids),
-            SystemClaudeMessage.status == ClaudeMessageStatus.pending,
+            SystemAgentChatMessage.conversation_id.in_(conversation_ids),
+            SystemAgentChatMessage.status == AgentChatMessageStatus.pending,
         )
         .all()
     )
     return {row[0] for row in rows}
 
 
-def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -> str:
+def build_chat_prompt(agent: SystemAgent, messages: list[SystemAgentChatMessage]) -> str:
     lines = [
         "# Agent configuration",
         f"Name: {agent.name}",
@@ -115,24 +115,24 @@ def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -
         ]
     )
     for message in messages:
-        if message.status != ClaudeMessageStatus.complete:
+        if message.status != AgentChatMessageStatus.complete:
             continue
-        if message.role == ClaudeMessageRole.user:
+        if message.role == AgentChatMessageRole.user:
             lines.extend(["## User", message.content, ""])
-        elif message.role == ClaudeMessageRole.assistant and message.content.strip():
+        elif message.role == AgentChatMessageRole.assistant and message.content.strip():
             lines.extend(["## Assistant", message.content, ""])
     return "\n".join(lines).strip() + "\n"
 
 
-def _mark_message_failed(message: SystemClaudeMessage, detail: str) -> None:
-    message.status = ClaudeMessageStatus.failed
+def _mark_message_failed(message: SystemAgentChatMessage, detail: str) -> None:
+    message.status = AgentChatMessageStatus.failed
     message.error_message = CHAT_FAILED_MESSAGE
     message.finished_at = datetime.now(timezone.utc)
     if not message.content:
         message.content = ""
     db.session.commit()
     logger.error(
-        "CLAUDE_CHAT_END %s",
+        "AGENT_CHAT_END %s",
         json.dumps(
             {
                 "message_id": message.id,
@@ -150,10 +150,10 @@ def _execute_chat(assistant_message_id: int) -> None:
 
     app = get_app()
     with app.app_context():
-        message = db.session.get(SystemClaudeMessage, assistant_message_id)
-        if not message or message.status != ClaudeMessageStatus.pending:
+        message = db.session.get(SystemAgentChatMessage, assistant_message_id)
+        if not message or message.status != AgentChatMessageStatus.pending:
             return
-        conversation = db.session.get(SystemClaudeConversation, message.conversation_id)
+        conversation = db.session.get(SystemAgentChatConversation, message.conversation_id)
         if not conversation:
             _mark_message_failed(message, "Conversation not found")
             return
@@ -166,8 +166,8 @@ def _execute_chat(assistant_message_id: int) -> None:
             return
 
         history = (
-            SystemClaudeMessage.query.filter_by(conversation_id=conversation.id)
-            .order_by(SystemClaudeMessage.id.asc())
+            SystemAgentChatMessage.query.filter_by(conversation_id=conversation.id)
+            .order_by(SystemAgentChatMessage.id.asc())
             .all()
         )
         prompt = build_chat_prompt(agent, history)
@@ -178,7 +178,7 @@ def _execute_chat(assistant_message_id: int) -> None:
         cwd = str(workspace_root())
 
         logger.info(
-            "CLAUDE_CHAT_START %s",
+            "AGENT_CHAT_START %s",
             json.dumps(
                 {
                     "message_id": message.id,
@@ -210,30 +210,30 @@ def _execute_chat(assistant_message_id: int) -> None:
         manual_stop = _consume_manual_stop_request(message.id)
         reply = result.output
 
-        status = ClaudeMessageStatus.complete
+        status = AgentChatMessageStatus.complete
         error_message = None
         detail = None
 
         if result.timed_out and result.error and "hard stop" in (result.error or ""):
-            status = ClaudeMessageStatus.failed
+            status = AgentChatMessageStatus.failed
             error_message = CHAT_FAILED_MESSAGE
             detail = f"Exceeded timeout ({timeout_seconds}s); hard stop"
         elif result.timed_out or (result.cancelled and not manual_stop):
             if reply:
                 detail = "Timed out after partial reply"
             else:
-                status = ClaudeMessageStatus.failed
+                status = AgentChatMessageStatus.failed
                 error_message = CHAT_FAILED_MESSAGE
                 detail = f"Exceeded timeout ({timeout_seconds}s)"
         elif result.cancelled or manual_stop:
             if reply:
                 detail = "Stopped after partial reply"
             else:
-                status = ClaudeMessageStatus.failed
+                status = AgentChatMessageStatus.failed
                 error_message = CHAT_FAILED_MESSAGE
                 detail = "Stopped by user"
         elif result.error:
-            status = ClaudeMessageStatus.failed
+            status = AgentChatMessageStatus.failed
             error_message = CHAT_FAILED_MESSAGE
             detail = result.error
 
@@ -247,7 +247,7 @@ def _execute_chat(assistant_message_id: int) -> None:
         conversation.updated_at = datetime.now(timezone.utc)
         db.session.commit()
         logger.info(
-            "CLAUDE_CHAT_END %s",
+            "AGENT_CHAT_END %s",
             json.dumps(
                 {
                     "message_id": message.id,
@@ -271,8 +271,8 @@ def _fail_chat_from_worker(message_id: int, detail: str | None = None) -> None:
 
     app = get_app()
     with app.app_context():
-        message = db.session.get(SystemClaudeMessage, message_id)
-        if not message or message.status != ClaudeMessageStatus.pending:
+        message = db.session.get(SystemAgentChatMessage, message_id)
+        if not message or message.status != AgentChatMessageStatus.pending:
             return
         _mark_message_failed(message, detail or "Chat worker failed unexpectedly")
 
@@ -283,7 +283,7 @@ def _worker_loop() -> None:
         try:
             _execute_chat(message_id)
         except Exception as exc:
-            logger.exception("Claude chat worker failed for message %s", message_id)
+            logger.exception("Agent chat worker failed for message %s", message_id)
             _fail_chat_from_worker(message_id, detail=str(exc))
         finally:
             _chat_queue.task_done()
@@ -293,18 +293,18 @@ def _ensure_worker() -> None:
     global _worker_started
     if _worker_started:
         return
-    thread = threading.Thread(target=_worker_loop, daemon=True, name="claude-chat-worker")
+    thread = threading.Thread(target=_worker_loop, daemon=True, name="agent-chat-worker")
     thread.start()
     _worker_started = True
 
 
-def create_conversation(agent_id: int, created_by: str | None, title: str | None = None) -> SystemClaudeConversation:
+def create_conversation(agent_id: int, created_by: str | None, title: str | None = None) -> SystemAgentChatConversation:
     agent = db.session.get(SystemAgent, agent_id)
     if not agent:
         raise APIClientError("Agent not found", 404)
     if not agent.enabled:
         raise APIClientError("Agent is disabled", 400)
-    conversation = SystemClaudeConversation(
+    conversation = SystemAgentChatConversation(
         title=(title or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
         agent_id=agent.id,
         agent_name=agent.name,
@@ -315,7 +315,7 @@ def create_conversation(agent_id: int, created_by: str | None, title: str | None
     return conversation
 
 
-def archive_conversation(conversation: SystemClaudeConversation) -> SystemClaudeConversation:
+def archive_conversation(conversation: SystemAgentChatConversation) -> SystemAgentChatConversation:
     if conversation.archived_at is not None:
         raise APIClientError("Conversation is already archived", 400)
     conversation.archived_at = datetime.now(timezone.utc)
@@ -323,7 +323,7 @@ def archive_conversation(conversation: SystemClaudeConversation) -> SystemClaude
     return conversation
 
 
-def unarchive_conversation(conversation: SystemClaudeConversation) -> SystemClaudeConversation:
+def unarchive_conversation(conversation: SystemAgentChatConversation) -> SystemAgentChatConversation:
     if conversation.archived_at is None:
         raise APIClientError("Conversation is not archived", 400)
     if conversation.agent_id is None:
@@ -333,7 +333,7 @@ def unarchive_conversation(conversation: SystemClaudeConversation) -> SystemClau
     return conversation
 
 
-def send_message(conversation: SystemClaudeConversation, content: str) -> SystemClaudeConversation:
+def send_message(conversation: SystemAgentChatConversation, content: str) -> SystemAgentChatConversation:
     _ensure_worker()
     if conversation.archived_at is not None:
         raise APIClientError("Conversation is archived", 400)
@@ -345,23 +345,23 @@ def send_message(conversation: SystemClaudeConversation, content: str) -> System
     if not agent.enabled:
         raise APIClientError("Agent is disabled", 400)
     if conversation_is_busy(conversation.id):
-        raise APIClientError("Claude is still responding", 409)
+        raise APIClientError("Agent is still responding", 409)
 
     if conversation.title == DEFAULT_CONVERSATION_TITLE:
         conversation.title = _title_from_prompt(content)
     conversation.updated_at = datetime.now(timezone.utc)
 
-    user_message = SystemClaudeMessage(
+    user_message = SystemAgentChatMessage(
         conversation_id=conversation.id,
-        role=ClaudeMessageRole.user,
-        status=ClaudeMessageStatus.complete,
+        role=AgentChatMessageRole.user,
+        status=AgentChatMessageStatus.complete,
         content=content,
         finished_at=datetime.now(timezone.utc),
     )
-    assistant_message = SystemClaudeMessage(
+    assistant_message = SystemAgentChatMessage(
         conversation_id=conversation.id,
-        role=ClaudeMessageRole.assistant,
-        status=ClaudeMessageStatus.pending,
+        role=AgentChatMessageRole.assistant,
+        status=AgentChatMessageStatus.pending,
         content="",
     )
     db.session.add(user_message)
@@ -372,27 +372,27 @@ def send_message(conversation: SystemClaudeConversation, content: str) -> System
     return conversation
 
 
-def stop_chat(conversation: SystemClaudeConversation) -> SystemClaudeConversation:
+def stop_chat(conversation: SystemAgentChatConversation) -> SystemAgentChatConversation:
     pending = (
-        SystemClaudeMessage.query.filter_by(
+        SystemAgentChatMessage.query.filter_by(
             conversation_id=conversation.id,
-            status=ClaudeMessageStatus.pending,
+            status=AgentChatMessageStatus.pending,
         )
-        .order_by(SystemClaudeMessage.id.desc())
+        .order_by(SystemAgentChatMessage.id.desc())
         .first()
     )
     if not pending:
-        raise APIClientError("Claude is not responding", 400)
+        raise APIClientError("Agent is not responding", 400)
 
     handle = get_active_handle(_chat_handle_key(pending.id))
     if handle is None:
-        raise APIClientError("Claude process is not active", 409)
+        raise APIClientError("Agent process is not active", 409)
 
     with _manual_stop_lock:
         _manual_stop_requested.add(pending.id)
     cancel_active_handle(_chat_handle_key(pending.id))
     logger.info(
-        "CLAUDE_CHAT_STOP %s",
+        "AGENT_CHAT_STOP %s",
         json.dumps(
             {
                 "message_id": pending.id,

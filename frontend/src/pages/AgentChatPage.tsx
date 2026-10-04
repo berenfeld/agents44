@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Agent, api, ClaudeConversation, ClaudeMessage, userFacingApiError } from "@/api/client";
+import { Agent, api, AgentChatConversation, AgentChatMessage, userFacingApiError } from "@/api/client";
 import { ConfirmModal, Modal, NoticeModal } from "@/components/ui/modal";
 import { Button, Label, Textarea } from "@/components/ui/primitives";
 import { PageHeader } from "@/components/ui/page-header";
@@ -45,17 +45,17 @@ function Spinner({ className }: { className?: string }) {
   );
 }
 
-function AssistantBody({ message }: { message: ClaudeMessage }) {
+function AssistantBody({ message }: { message: AgentChatMessage }) {
   if (message.status === "pending") {
     return (
       <p className="inline-flex items-center gap-2 text-sm text-slate-500">
         <Spinner className="h-4 w-4" />
-        Claude is responding...
+        Agent is responding...
       </p>
     );
   }
   if (message.status === "failed" && !message.content.trim()) {
-    return <p className="text-sm text-red-600">{message.error_message || "Claude failed to reply"}</p>;
+    return <p className="text-sm text-red-600">{message.error_message || "Agent failed to reply"}</p>;
   }
   return (
     <div className="space-y-2">
@@ -73,16 +73,16 @@ function AssistantBody({ message }: { message: ClaudeMessage }) {
   );
 }
 
-export default function ClaudePage() {
+export default function AgentChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = parseConversationId(searchParams.get("conversation"));
   const selectedIdRef = useRef(selectedId);
   const setSearchParamsRef = useRef(setSearchParams);
 
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [tabs, setTabs] = useState<ClaudeConversation[]>([]);
-  const [archived, setArchived] = useState<ClaudeConversation[]>([]);
-  const [conversation, setConversation] = useState<ClaudeConversation | null>(null);
+  const [tabs, setTabs] = useState<AgentChatConversation[]>([]);
+  const [archived, setArchived] = useState<AgentChatConversation[]>([]);
+  const [conversation, setConversation] = useState<AgentChatConversation | null>(null);
   const [agentId, setAgentId] = useState<number | "">("");
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(true);
@@ -92,7 +92,7 @@ export default function ClaudePage() {
   const [changingAgent, setChangingAgent] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [restoringId, setRestoringId] = useState<number | null>(null);
-  const [archiveTarget, setArchiveTarget] = useState<ClaudeConversation | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<AgentChatConversation | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [loadingArchived, setLoadingArchived] = useState(false);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
@@ -126,7 +126,7 @@ export default function ClaudePage() {
   const loadTabs = useCallback(async () => {
     const [agentsRes, tabsRes] = await Promise.all([
       api.get<Agent[]>("/agents"),
-      api.get<ClaudeConversation[]>("/claude/conversations"),
+      api.get<AgentChatConversation[]>("/agent-chat/conversations"),
     ]);
     setAgents(agentsRes.data);
     setTabs(tabsRes.data);
@@ -140,7 +140,7 @@ export default function ClaudePage() {
   }, []);
 
   const loadConversation = useCallback(async (id: number) => {
-    const res = await api.get<ClaudeConversation>(`/claude/conversations/${id}`);
+    const res = await api.get<AgentChatConversation>(`/agent-chat/conversations/${id}`);
     if (selectedIdRef.current !== id) {
       return res.data;
     }
@@ -232,7 +232,7 @@ export default function ClaudePage() {
     }
     setCreating(true);
     try {
-      const res = await api.post<ClaudeConversation>("/claude/conversations", { agent_id: agentId });
+      const res = await api.post<AgentChatConversation>("/agent-chat/conversations", { agent_id: agentId });
       setTabs((current) => [...current, { ...res.data, messages: undefined }]);
       setConversation(res.data);
       setPrompt("");
@@ -250,7 +250,7 @@ export default function ClaudePage() {
     if (nextAgentId === conversation.agent_id) return;
     setChangingAgent(true);
     try {
-      const res = await api.patch<ClaudeConversation>(`/claude/conversations/${conversation.id}`, {
+      const res = await api.patch<AgentChatConversation>(`/agent-chat/conversations/${conversation.id}`, {
         agent_id: nextAgentId,
       });
       setConversation(res.data);
@@ -268,7 +268,7 @@ export default function ClaudePage() {
     const content = prompt.trim();
     setSending(true);
     try {
-      const res = await api.post<ClaudeConversation>(`/claude/conversations/${conversation.id}/messages`, { content });
+      const res = await api.post<AgentChatConversation>(`/agent-chat/conversations/${conversation.id}/messages`, { content });
       setPrompt("");
       setConversation(res.data);
       setTabs((current) => current.map((tab) => (tab.id === res.data.id ? { ...tab, ...res.data, messages: undefined } : tab)));
@@ -283,10 +283,10 @@ export default function ClaudePage() {
     if (!conversation) return;
     setStopping(true);
     try {
-      const res = await api.post<ClaudeConversation>(`/claude/conversations/${conversation.id}/stop`, {});
+      const res = await api.post<AgentChatConversation>(`/agent-chat/conversations/${conversation.id}/stop`, {});
       setConversation(res.data);
     } catch (err) {
-      setNotice({ title: "Could not stop Claude", message: userFacingApiError(err) });
+      setNotice({ title: "Could not stop agent", message: userFacingApiError(err) });
     } finally {
       setStopping(false);
     }
@@ -297,7 +297,7 @@ export default function ClaudePage() {
     const target = archiveTarget;
     setArchiving(true);
     try {
-      await api.post(`/claude/conversations/${target.id}/archive`, {});
+      await api.post(`/agent-chat/conversations/${target.id}/archive`, {});
       const remaining = tabs.filter((tab) => tab.id !== target.id);
       setTabs(remaining);
       setArchiveTarget(null);
@@ -317,7 +317,7 @@ export default function ClaudePage() {
     setArchivedOpen(true);
     setLoadingArchived(true);
     try {
-      const res = await api.get<ClaudeConversation[]>("/claude/conversations", { params: { archived: true } });
+      const res = await api.get<AgentChatConversation[]>("/agent-chat/conversations", { params: { archived: true } });
       setArchived(res.data);
     } catch (err) {
       setArchivedOpen(false);
@@ -327,10 +327,10 @@ export default function ClaudePage() {
     }
   };
 
-  const restoreConversation = async (row: ClaudeConversation) => {
+  const restoreConversation = async (row: AgentChatConversation) => {
     setRestoringId(row.id);
     try {
-      const res = await api.post<ClaudeConversation>(`/claude/conversations/${row.id}/unarchive`, {});
+      const res = await api.post<AgentChatConversation>(`/agent-chat/conversations/${row.id}/unarchive`, {});
       setArchived((current) => current.filter((item) => item.id !== row.id));
       setTabs((current) => [...current, { ...res.data, messages: undefined }]);
       setConversation(res.data);
@@ -347,14 +347,14 @@ export default function ClaudePage() {
   return (
     <div className="flex h-[calc(100dvh-11rem)] min-h-[32rem] flex-col gap-3">
       <PageHeader
-        title="Claude"
+        title="Chat With Agent"
         filters={
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Label htmlFor="claude-agent" className="sr-only">
+            <Label htmlFor="agent-chat-agent" className="sr-only">
               Agent
             </Label>
             <select
-              id="claude-agent"
+              id="agent-chat-agent"
               aria-label="Select agent"
               className={selectClassName}
               value={agentId}
@@ -445,7 +445,7 @@ export default function ClaudePage() {
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-slate-500">Loading...</div>
         ) : agents.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-slate-600">
-            <p>Create an agent before starting a Claude conversation.</p>
+            <p>Create an agent before starting a conversation.</p>
             <Link className="text-slate-900 underline" to="/agents">
               Go to Agents
             </Link>
@@ -454,7 +454,7 @@ export default function ClaudePage() {
           <div className="flex flex-1 items-center justify-center p-6 text-sm text-slate-500">Loading...</div>
         ) : !conversation ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-slate-600">
-            <p>Select an agent and open a conversation tab to chat with Claude.</p>
+            <p>Select an agent and open a conversation tab to chat.</p>
             <Button onClick={() => void createTab()} disabled={creating || agentId === ""}>
               {creating ? "Creating..." : "New conversation"}
             </Button>
@@ -521,7 +521,7 @@ export default function ClaudePage() {
                 messages.map((message) => (
                   <div key={message.id} className="space-y-1">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      {message.role === "user" ? "Prompt" : "Claude"}
+                      {message.role === "user" ? "Prompt" : "Agent"}
                     </div>
                     {message.role === "user" ? (
                       <div className="whitespace-pre-wrap rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-900">

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from flask import current_app
 from pydantic_ai import Agent, CancellationToken
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from app.services.agent_runtime.deps import RuntimeDeps
 from app.services.agent_runtime.gateway import LlmGateway
@@ -20,6 +22,46 @@ from app.services.agent_runtime.shell_tool import build_shell_tool
 from app.services.model_registry import estimate_cost, normalize_model_id
 
 logger = logging.getLogger(__name__)
+
+_TOOL_RESULT_MAX_CHARS = 4000
+
+
+def _coerce_tool_args(args: Any) -> Any:
+    if args is None:
+        return None
+    if isinstance(args, str):
+        try:
+            return json.loads(args)
+        except json.JSONDecodeError:
+            return args
+    return args
+
+
+def _format_tool_args(tool_name: str, args: Any) -> str:
+    parsed = _coerce_tool_args(args)
+    if parsed is None:
+        return "(no args)"
+    if isinstance(parsed, dict):
+        if tool_name == "run_shell" and isinstance(parsed.get("command"), str):
+            return f"$ {parsed['command']}"
+        return json.dumps(parsed, ensure_ascii=False, indent=2)
+    if isinstance(parsed, str):
+        return parsed
+    return json.dumps(parsed, ensure_ascii=False, indent=2, default=str)
+
+
+def _format_tool_result_content(content: Any) -> str:
+    if content is None:
+        return "(empty)"
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, (dict, list)):
+        text = json.dumps(content, ensure_ascii=False, indent=2, default=str)
+    else:
+        text = str(content)
+    if len(text) > _TOOL_RESULT_MAX_CHARS:
+        return text[:_TOOL_RESULT_MAX_CHARS] + f"\n...[truncated {len(text) - _TOOL_RESULT_MAX_CHARS} chars]"
+    return text
 
 
 def _mcp_sse_url() -> str:
@@ -97,18 +139,31 @@ def _format_event(event: object) -> str | None:
     name = type(event).__name__
     if name == "FunctionToolCallEvent":
         part = getattr(event, "part", None)
-        tool_name = getattr(part, "tool_name", None) or getattr(event, "tool_name", "?")
-        args = getattr(part, "args", None)
-        return f"[tool_call] {tool_name} args={args!r}"
+        tool_name = getattr(part, "tool_name", None) or getattr(event, "tool_name", None) or "?"
+        args = None
+        if part is not None and hasattr(part, "args_as_dict"):
+            try:
+                args = part.args_as_dict()
+            except Exception:  # noqa: BLE001 — fall back to raw args
+                args = getattr(part, "args", None)
+        else:
+            args = getattr(part, "args", None) if part is not None else None
+        body = _format_tool_args(str(tool_name), args)
+        return f"--- Tool call: {tool_name} ---\n{body}"
     if name == "FunctionToolResultEvent":
-        tool_name = getattr(event, "tool_name", None) or "?"
-        result = getattr(event, "result", None)
-        text = repr(result)
-        if len(text) > 2000:
-            text = text[:2000] + "...[truncated]"
-        return f"[tool_result] {tool_name} -> {text}"
+        part = getattr(event, "part", None)
+        tool_name = (
+            getattr(part, "tool_name", None)
+            or getattr(event, "tool_name", None)
+            or "?"
+        )
+        content = getattr(event, "content", None)
+        if content is None and part is not None:
+            content = getattr(part, "content", None)
+        body = _format_tool_result_content(content)
+        return f"--- Tool result: {tool_name} ---\n{body}"
     if name == "FinalResultEvent":
-        return "[final_result]"
+        return "--- Final result ---"
     return None
 
 
@@ -230,12 +285,17 @@ class AgentRuntime:
             await asyncio.sleep(soft_at)
             soft_cancelled = True
             on_event(
-                f"[timeout] soft cancel at {soft_at}s "
+                "--- Timeout ---\n"
+                f"soft cancel at {soft_at}s "
                 f"(configured timeout {timeout_seconds}s + {soft_cancel_grace_seconds}s)"
             )
             handle.cancel()
 
         watch_task = asyncio.create_task(_soft_cancel_watch())
+        # Shared usage accumulator — populated even when the run fails (e.g. request_limit).
+        run_usage = RunUsage()
+        # Timeout/cancel already bound agent runs; do not hard-cap model requests at 50.
+        usage_limits = UsageLimits(request_limit=None)
         try:
             async with agent:
                 result = await asyncio.wait_for(
@@ -244,27 +304,21 @@ class AgentRuntime:
                         deps=deps,
                         cancellation_token=handle.cancellation_token,
                         event_stream_handler=event_handler,
+                        usage=run_usage,
+                        usage_limits=usage_limits,
                     ),
                     timeout=hard_at,
                 )
             output = str(result.output or "").strip()
             if output:
-                transcript_parts.append(f"[text]\n{output}")
-                on_event(f"[text]\n{output}")
-            usage = result.usage() if callable(result.usage) else result.usage
-            tokens_in = int(getattr(usage, "input_tokens", 0) or 0) or None
-            tokens_out = int(getattr(usage, "output_tokens", 0) or 0) or None
-            try:
-                cost = estimate_cost(normalize_model_id(model_id), tokens_in, tokens_out)
-            except Exception:  # noqa: BLE001 — pricing is best-effort
-                logger.warning("Cost estimate failed for model %s", model_id, exc_info=True)
-                cost = None
+                transcript_parts.append(f"--- Assistant ---\n{output}")
+                on_event(f"--- Assistant ---\n{output}")
         except asyncio.TimeoutError:
             timed_out = True
             handle.cancel()
             error = f"Exceeded timeout ({timeout_seconds}s); hard stop at {hard_at}s"
-            transcript_parts.append(f"[error] {error}")
-            on_event(f"[error] {error}")
+            transcript_parts.append(f"--- Error ---\n{error}")
+            on_event(f"--- Error ---\n{error}")
         except Exception as exc:  # noqa: BLE001
             if handle.cancellation_token.cancelled:
                 cancelled = True
@@ -276,14 +330,35 @@ class AgentRuntime:
             else:
                 error = str(exc) or type(exc).__name__
                 logger.exception("AgentRuntime failed for %s/%s", department, agent_name)
-            transcript_parts.append(f"[error] {error}")
-            on_event(f"[error] {error}")
+            transcript_parts.append(f"--- Error ---\n{error}")
+            on_event(f"--- Error ---\n{error}")
         finally:
             watch_task.cancel()
             try:
                 await watch_task
             except asyncio.CancelledError:
                 pass
+
+        # Read from the shared accumulator (not only result.usage) so failed/cancelled
+        # runs still report tokens after e.g. a former request_limit stop.
+        tokens_in = int(run_usage.input_tokens or 0) or None
+        tokens_out = int(run_usage.output_tokens or 0) or None
+        try:
+            cost = estimate_cost(normalize_model_id(model_id), tokens_in, tokens_out)
+        except Exception:  # noqa: BLE001 — pricing is best-effort
+            logger.warning("Cost estimate failed for model %s", model_id, exc_info=True)
+            cost = None
+
+        if run_usage.requests or tokens_in is not None or tokens_out is not None or cost is not None:
+            usage_line = (
+                "--- Usage ---\n"
+                f"requests: {run_usage.requests}\n"
+                f"tokens_in: {tokens_in}\n"
+                f"tokens_out: {tokens_out}\n"
+                f"estimated_cost_usd: {cost}"
+            )
+            transcript_parts.append(usage_line)
+            on_event(usage_line)
 
         duration = time.monotonic() - started
         return AgentRuntimeResult(

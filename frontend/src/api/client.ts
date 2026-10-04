@@ -114,7 +114,7 @@ export type AgentRun = {
 
 export type ModelsResponse = { models: string[]; default: string };
 
-export type ClaudeMessage = {
+export type AgentChatMessage = {
   id: number;
   conversation_id: number;
   role: "user" | "assistant";
@@ -128,7 +128,7 @@ export type ClaudeMessage = {
   finished_at: string | null;
 };
 
-export type ClaudeConversation = {
+export type AgentChatConversation = {
   id: number;
   title: string;
   agent_id: number | null;
@@ -140,7 +140,7 @@ export type ClaudeConversation = {
   created_at: string | null;
   updated_at: string | null;
   busy: boolean;
-  messages?: ClaudeMessage[];
+  messages?: AgentChatMessage[];
 };
 
 export type WhatsAppMessage = {

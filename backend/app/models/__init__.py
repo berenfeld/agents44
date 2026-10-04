@@ -1,8 +1,8 @@
-from app.models.claude_conversation import (
-    ClaudeMessageRole,
-    ClaudeMessageStatus,
-    SystemClaudeConversation,
-    SystemClaudeMessage,
+from app.models.agent_chat_conversation import (
+    AgentChatMessageRole,
+    AgentChatMessageStatus,
+    SystemAgentChatConversation,
+    SystemAgentChatMessage,
 )
 from app.models.email import (
     EmailContentType,
@@ -24,16 +24,16 @@ from app.models.whatsapp import (
 )
 
 __all__ = [
-    "ClaudeMessageRole",
-    "ClaudeMessageStatus",
+    "AgentChatMessageRole",
+    "AgentChatMessageStatus",
     "EmailContentType",
     "EmailSendingStatus",
     "RunStatus",
     "SystemAgent",
+    "SystemAgentChatConversation",
+    "SystemAgentChatMessage",
     "SystemAgentRun",
     "SystemAllowedEmail",
-    "SystemClaudeConversation",
-    "SystemClaudeMessage",
     "SystemDepartment",
     "SystemEmailConf",
     "SystemEmailMessage",

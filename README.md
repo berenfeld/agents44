@@ -87,10 +87,10 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `POST /api/agents/{id}/trigger` | Manual run |
 | `GET /api/runs` | Run history (tokens + cost) |
 | `GET /api/models` | Supported models (provider-prefixed LiteLLM ids) |
-| `GET /api/claude/conversations` | List Claude chat tabs (`?archived=true` for archived) |
-| `POST /api/claude/conversations` | Create a chat tab |
-| `POST /api/claude/conversations/{id}/messages` | Send a prompt in a tab |
-| `POST /api/claude/conversations/{id}/archive` | Hide a tab (messages stay in the database) |
+| `GET /api/agent-chat/conversations` | List agent chat tabs (`?archived=true` for archived) |
+| `POST /api/agent-chat/conversations` | Create a chat tab |
+| `POST /api/agent-chat/conversations/{id}/messages` | Send a prompt in a tab |
+| `POST /api/agent-chat/conversations/{id}/archive` | Hide a tab (messages stay in the database) |
 | `GET /api/whatsapp/conversations` | Operator WhatsApp inbox |
 | `GET /api/emails` | Operator email log (`?agent_id=&address=&subject=&content=`) |
 | `PATCH /api/emails/{id}` | Edit a stored email or set `sending_status` (`pending` / `canceled` / `sent` / `fail`) |

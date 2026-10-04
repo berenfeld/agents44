@@ -12,7 +12,7 @@ from app.api.agent_db import agent_db_bp
 from app.api.agents import agents_bp
 from app.api.allowed_emails import allowed_emails_bp
 from app.api.auth_routes import auth_bp, params_bp
-from app.api.claude import claude_bp
+from app.api.agent_chat import agent_chat_bp
 from app.api.departments import departments_bp
 from app.api.emails import emails_bp
 from app.api.files import files_bp
@@ -94,7 +94,7 @@ def create_app() -> Flask:
     app.register_blueprint(files_bp, url_prefix="/api/files")
     app.register_blueprint(params_bp, url_prefix="/api/system-params")
     app.register_blueprint(allowed_emails_bp, url_prefix="/api/allowed-emails")
-    app.register_blueprint(claude_bp, url_prefix="/api/claude")
+    app.register_blueprint(agent_chat_bp, url_prefix="/api/agent-chat")
     app.register_blueprint(whatsapp_bp, url_prefix="/api/whatsapp")
     app.register_blueprint(emails_bp, url_prefix="/api/emails")
     app.register_blueprint(webhooks_bp, url_prefix="/api/webhooks")
@@ -135,7 +135,7 @@ def create_app() -> Flask:
                     "/api/departments": {"get": {}, "post": {}, "delete": {}},
                     "/api/runs": {"get": {}},
                     "/api/models": {"get": {}},
-                    "/api/claude/conversations": {"get": {}, "post": {}},
+                    "/api/agent-chat/conversations": {"get": {}, "post": {}},
                     "/api/whatsapp/conversations": {"get": {}},
                     "/api/emails": {"get": {}, "patch": {}},
                     "/api/files": {"get": {}, "post": {}, "put": {}, "delete": {}},

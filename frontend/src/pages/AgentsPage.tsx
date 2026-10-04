@@ -496,7 +496,7 @@ export default function AgentsPage() {
             <div className="space-y-3">
               <AgentDetailSummary agent={deleteAgent} />
               <p>
-                Claude conversations will be archived and kept. Emails, WhatsApp threads, and run history stay in the
+                Chat conversations will be archived and kept. Emails, WhatsApp threads, and run history stay in the
                 database.
               </p>
             </div>
@@ -512,7 +512,7 @@ export default function AgentsPage() {
             await load();
             setNotice({
               title: "Agent deleted",
-              message: `Deleted ${target.name}. Claude conversations were archived.`,
+              message: `Deleted ${target.name}. Chat conversations were archived.`,
             });
           } catch (err) {
             setDeleteAgent(null);
