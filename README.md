@@ -7,7 +7,7 @@ Generic platform to run and monitor AI agents at `agents.catch44.co.il`.
 - **Frontend**: React + Vite (English UI)
 - **Backend**: Python Flask + SQLAlchemy + APScheduler
 - **Database**: PostgreSQL (UTF-8)
-- **Agents**: Claude CLI subprocess with embedded MCP tools
+- **Agents**: Pydantic AI + LiteLLM (multi-provider) with embedded MCP tools
 - **Runtime**: one Ubuntu 24.04 Docker image (nginx + Flask + PostgreSQL) — same image locally and on AWS/ECR
 
 ## Environment
@@ -18,12 +18,12 @@ All configuration and secrets live in **one** dotenv file:
 |-------------|------|
 | Local / Docker | `./.env` mounted at `/opt/agents44/.env` |
 
-Copy `.env.example` to `./.env` and set values. `ANTHROPIC_API_KEY` is required for agent runs and for loading the model list at backend startup. Do not add `backend/.env`, `frontend/.env`, or `.env.local` files.
+Copy `.env.example` to `./.env` and set values. LLM provider API keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are stored in **Settings** (`system_params`), not in `.env`. Models are selected from the `SUPPORTED_MODELS` allowlist (provider-prefixed LiteLLM ids). Do not add `backend/.env`, `frontend/.env`, or `.env.local` files.
 
 ## Run (local = same image as AWS)
 
 ```bash
-cp .env.example .env   # once; set ANTHROPIC_API_KEY and secrets
+cp .env.example .env   # once; set secrets. Put LLM API keys in Settings after login.
 ./start-dev.sh
 ```
 
@@ -86,7 +86,7 @@ GitHub Actions builds the same image on every push to `main` and pushes to Amazo
 | `POST /api/agents` | Create agent |
 | `POST /api/agents/{id}/trigger` | Manual run |
 | `GET /api/runs` | Run history (tokens + cost) |
-| `GET /api/models` | Supported Claude models |
+| `GET /api/models` | Supported models (provider-prefixed LiteLLM ids) |
 | `GET /api/claude/conversations` | List Claude chat tabs (`?archived=true` for archived) |
 | `POST /api/claude/conversations` | Create a chat tab |
 | `POST /api/claude/conversations/{id}/messages` | Send a prompt in a tab |
@@ -118,10 +118,10 @@ All mutating API calls use `Content-Type: application/json`.
 ## system_params keys (CAPITAL_LETTERS)
 
 - `NOTIFY_ON` — `all` | `failures` | `none`
-- `MODEL_PRICING` — per-model USD per 1M tokens for cost estimates
-- `CLAUDE_CLI_ARGS` — JSON array of extra Claude CLI flags
-- `TIMEOUT_SIGTERM_GRACE_SECONDS` — seconds after timeout before SIGTERM (default 300)
-- `TIMEOUT_SIGKILL_GRACE_SECONDS` — seconds after timeout before SIGKILL (default 600)
+- `MODEL_PRICING` — per-model USD per 1M tokens for cost estimates (provider-prefixed ids)
+- `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` — LLM provider keys (any `*_API_KEY` works)
+- `TIMEOUT_SIGTERM_GRACE_SECONDS` — seconds after timeout before soft cancel (default 300)
+- `TIMEOUT_SIGKILL_GRACE_SECONDS` — seconds after timeout before hard stop (default 600)
 - `EMAIL_SEND_INTERVAL_SECONDS` — how often pending agent emails are retried (default 300)
 - `EMAIL_SEND_GIVE_UP_SECONDS` — when a still-pending email is marked `fail` (default 86400)
 

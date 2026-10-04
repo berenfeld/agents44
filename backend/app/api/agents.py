@@ -9,7 +9,7 @@ from app.errors import APIClientError, api_endpoint
 from app.extensions import db
 from app.models import SystemAgent, SystemAgentRun, SystemClaudeConversation, SystemDepartment, SystemEmailMessage, SystemWhatsAppConversation
 from app.models.run_status import RunStatus
-from app.services.model_registry import validate_model
+from app.services.model_registry import normalize_model_id, validate_model
 from app.services.scheduler import sync_scheduler_jobs
 from app.services.timeout import parse_timeout_input
 from app.services.params import get_timeout_sigkill_grace_seconds, get_timeout_sigterm_grace_seconds
@@ -111,6 +111,7 @@ def list_agents():
 @login_required
 def create_agent():
     data = AgentSchema().load(request.get_json(force=True) or {})
+    data["model"] = normalize_model_id(data["model"])
     if not validate_model(data["model"]):
         raise APIClientError("Unsupported model", 400)
     name = validate_agent_folder_name(data["name"])
@@ -166,8 +167,10 @@ def update_agent(agent_id: int):
         raise APIClientError("Agent name cannot be changed", 400)
     if "department" in data and data["department"] != agent.department:
         raise APIClientError("Department cannot be changed", 400)
-    if "model" in data and not validate_model(data["model"]):
-        raise APIClientError("Unsupported model", 400)
+    if "model" in data:
+        data["model"] = normalize_model_id(data["model"])
+        if not validate_model(data["model"]):
+            raise APIClientError("Unsupported model", 400)
     previous_timeout = agent.timeout_seconds
     for key, value in data.items():
         setattr(agent, key, value)

@@ -2,14 +2,9 @@ import json
 import logging
 import os
 import queue
-import shlex
-import shutil
-import signal
-import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
@@ -19,15 +14,15 @@ from flask import current_app
 from app.errors import APIClientError
 from app.extensions import db
 from app.models import RunStatus, SystemAgent, SystemAgentRun, TriggerSource
+from app.services.agent_runtime import AgentRuntime
+from app.services.agent_runtime.runtime import cancel_active_handle, get_active_handle
+from app.services.db_provisioning import build_agent_db_instructions
 from app.services.email import maybe_notify_run
-from app.services.model_registry import parse_claude_result
 from app.services.outbound_email import build_email_instructions
 from app.services.params import (
-    get_claude_cli_extra_args,
     get_timeout_sigkill_grace_seconds,
     get_timeout_sigterm_grace_seconds,
 )
-from app.services.db_provisioning import build_agent_db_instructions
 from app.services.whatsapp import build_whatsapp_instructions
 from app.services.workspace import (
     build_memory_instructions,
@@ -43,8 +38,6 @@ logger = logging.getLogger(__name__)
 _run_lock = threading.Lock()
 _run_queue: queue.Queue = queue.Queue()
 _worker_started = False
-_active_procs: dict[int, subprocess.Popen] = {}
-_active_procs_lock = threading.Lock()
 _active_run_timeouts: dict[int, int] = {}
 _active_run_timeouts_lock = threading.Lock()
 _manual_stop_requested: set[int] = set()
@@ -54,15 +47,8 @@ RUN_FAILED_MESSAGE = "Agent run failed"
 LOG_STDERR_MAX = 4000
 
 
-@dataclass(frozen=True)
-class ClaudeSubprocessResult:
-    returncode: int
-    stdout: str
-    stderr: str
-    duration_seconds: float
-    sigterm_sent: bool
-    sigkill_sent: bool
-    enforced_timeout_seconds: int
+def _run_handle_key(run_id: int) -> str:
+    return f"run:{run_id}"
 
 
 def _enforcement_note(
@@ -70,43 +56,19 @@ def _enforcement_note(
     *,
     sigterm_grace_seconds: int,
     sigkill_grace_seconds: int,
-    sigterm_sent: bool,
-    sigkill_sent: bool,
+    soft_cancelled: bool,
+    hard_stopped: bool,
 ) -> str:
     parts = [f"Agent run exceeded configured timeout ({timeout_seconds}s)"]
-    if sigterm_sent:
-        parts.append(f"SIGTERM at {timeout_seconds + sigterm_grace_seconds}s")
-    if sigkill_sent:
-        parts.append(f"SIGKILL at {timeout_seconds + sigkill_grace_seconds}s")
+    if soft_cancelled:
+        parts.append(f"soft cancel at {timeout_seconds + sigterm_grace_seconds}s")
+    if hard_stopped:
+        parts.append(f"hard stop at {timeout_seconds + sigkill_grace_seconds}s")
     return "; ".join(parts)
 
 
 def _summary_written(summary_path: Path) -> bool:
     return summary_path.exists() and bool(summary_path.read_text(encoding="utf-8").strip())
-
-
-def _signal_process_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
-    if proc.poll() is not None:
-        return
-    try:
-        os.killpg(proc.pid, sig)
-    except ProcessLookupError:
-        pass
-
-
-def _register_active_proc(run_id: int, proc: subprocess.Popen) -> None:
-    with _active_procs_lock:
-        _active_procs[run_id] = proc
-
-
-def _unregister_active_proc(run_id: int) -> None:
-    with _active_procs_lock:
-        _active_procs.pop(run_id, None)
-
-
-def _get_active_proc(run_id: int) -> subprocess.Popen | None:
-    with _active_procs_lock:
-        return _active_procs.get(run_id)
 
 
 def _run_timeout_path(run_id: int) -> Path:
@@ -138,7 +100,6 @@ def _read_run_timeout(run_id: int) -> int | None:
 
 
 def _register_run_timeout(run_id: int, timeout_seconds: int) -> None:
-    # Exclusive create so a bump from another gunicorn worker is not overwritten.
     path = _run_timeout_path(run_id)
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
@@ -178,8 +139,8 @@ def sync_agent_run_timeout(agent_id: int, timeout_seconds: int) -> None:
                     "\n=== TIMEOUT UPDATED ===\n"
                     f"previous_timeout_seconds: {previous if previous is not None else '(unknown)'}\n"
                     f"timeout_seconds: {timeout_seconds}\n"
-                    f"timeout_sigterm_at_seconds: {timeout_seconds + sigterm_grace_seconds}\n"
-                    f"timeout_sigkill_at_seconds: {timeout_seconds + sigkill_grace_seconds}\n"
+                    f"timeout_soft_cancel_at_seconds: {timeout_seconds + sigterm_grace_seconds}\n"
+                    f"timeout_hard_stop_at_seconds: {timeout_seconds + sigkill_grace_seconds}\n"
                 )
                 log_file.flush()
 
@@ -211,23 +172,13 @@ def _truncate_text(text: str, max_chars: int = LOG_STDERR_MAX) -> str:
     return f"{text[:max_chars]}...[truncated {len(text) - max_chars} chars]"
 
 
-def _format_command_line(cmd: list[str], *, prompt_path: str | None = None) -> str:
-    display_cmd = list(cmd)
-    if prompt_path and len(display_cmd) >= 3 and display_cmd[0] == "claude" and display_cmd[1] == "-p":
-        prompt_len = len(display_cmd[2])
-        display_cmd[2] = f"@{prompt_path} ({prompt_len} chars)"
-    return " ".join(shlex.quote(arg) for arg in display_cmd)
-
-
 def _run_start_context(
     run: SystemAgentRun,
     agent: SystemAgent,
     *,
-    cmd: list[str],
     timeout_seconds: int,
     sigterm_grace_seconds: int,
     sigkill_grace_seconds: int,
-    mcp_config_path: Path,
     cwd: str,
     payload: dict | None,
 ) -> dict:
@@ -237,19 +188,19 @@ def _run_start_context(
         "agent_name": agent.name,
         "department": agent.department,
         "model": agent.model,
+        "runtime": "pydantic-ai+litellm",
         "trigger_source": run.trigger_source.value,
         "timeout_seconds": timeout_seconds,
-        "timeout_sigterm_grace_seconds": sigterm_grace_seconds,
-        "timeout_sigkill_grace_seconds": sigkill_grace_seconds,
-        "timeout_sigterm_at_seconds": timeout_seconds + sigterm_grace_seconds,
-        "timeout_sigkill_at_seconds": timeout_seconds + sigkill_grace_seconds,
+        "timeout_soft_cancel_grace_seconds": sigterm_grace_seconds,
+        "timeout_hard_stop_grace_seconds": sigkill_grace_seconds,
+        "timeout_soft_cancel_at_seconds": timeout_seconds + sigterm_grace_seconds,
+        "timeout_hard_stop_at_seconds": timeout_seconds + sigkill_grace_seconds,
         "cwd": cwd,
         "run_dir": run.run_dir,
         "prompt_path": run.prompt_path,
         "log_path": run.log_path,
-        "mcp_config_path": str(mcp_config_path),
         "has_payload": payload is not None,
-        "command": _format_command_line(cmd, prompt_path=run.prompt_path),
+        "command": f"AgentRuntime model={agent.model}",
     }
 
 
@@ -274,59 +225,14 @@ def _write_run_log_start(log_path: Path, context: dict) -> None:
                 continue
             log_file.write(f"{key}: {value}\n")
         log_file.write(f"\n$ {context['command']}\n\n")
-
-
-def _append_message_blocks(parts: list[str], message: dict) -> None:
-    for block in message.get("content", []) or []:
-        if not isinstance(block, dict):
-            continue
-        block_type = block.get("type")
-        if block_type == "thinking":
-            thinking = block.get("thinking") or block.get("text") or ""
-            if thinking:
-                parts.append(f"[thinking]\n{thinking}\n")
-        elif block_type == "text":
-            text = block.get("text") or ""
-            if text:
-                parts.append(f"[text]\n{text}\n")
-
-
-def format_claude_stream_transcript(stdout: str) -> str:
-    import json
-
-    parts: list[str] = []
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-
-        event_type = data.get("type")
-        if event_type == "assistant":
-            _append_message_blocks(parts, data.get("message", {}))
-        elif event_type == "content_block_delta":
-            delta = data.get("delta", {})
-            if delta.get("type") == "thinking_delta":
-                parts.append(delta.get("thinking", ""))
-            elif delta.get("type") == "text_delta":
-                parts.append(delta.get("text", ""))
-        elif event_type == "result":
-            result = data.get("result")
-            if isinstance(result, str) and result.strip():
-                parts.append(f"\n[result]\n{result.strip()}\n")
-
-    return "".join(parts).strip()
+        log_file.write("=== STDOUT ===\n")
 
 
 def _write_run_log_finish(
     log_path: Path,
     *,
     returncode: int,
-    stdout: str,
-    stderr: str,
+    transcript: str,
     duration_seconds: float,
     status: RunStatus,
     tokens_in: int | None = None,
@@ -334,17 +240,11 @@ def _write_run_log_finish(
     estimated_cost_usd: float | None = None,
     error_message: str | None = None,
     extra_notes: str | None = None,
-    stdout_written: bool = False,
 ) -> None:
     with open(log_path, "a", encoding="utf-8") as log_file:
-        if not stdout_written:
-            log_file.write("\n=== STDOUT ===\n")
-            log_file.write(stdout if stdout else "(empty)\n")
-        log_file.write("\n=== STDERR ===\n")
-        log_file.write(stderr if stderr else "(empty)\n")
-        transcript = format_claude_stream_transcript(stdout)
+        log_file.write("\n=== STDERR ===\n(empty)\n")
         if transcript:
-            log_file.write("\n=== TRANSCRIPT (thinking + text) ===\n")
+            log_file.write("\n=== TRANSCRIPT ===\n")
             log_file.write(transcript)
             log_file.write("\n")
         log_file.write("=== RUN END ===\n")
@@ -361,109 +261,6 @@ def _write_run_log_finish(
             log_file.write(f"error_message: {error_message}\n")
         if extra_notes:
             log_file.write(f"notes: {extra_notes}\n")
-
-
-def _run_claude_subprocess(
-    run_id: int,
-    log_path: Path,
-    cmd: list[str],
-    *,
-    cwd: str,
-    env: dict[str, str],
-    timeout_seconds: int,
-    sigterm_grace_seconds: int,
-    sigkill_grace_seconds: int,
-) -> ClaudeSubprocessResult:
-    stdout_parts: list[str] = []
-    stderr_parts: list[str] = []
-
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        log_file.write("\n=== STDOUT ===\n")
-        log_file.flush()
-
-        proc = subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            start_new_session=True,
-        )
-        _register_active_proc(run_id, proc)
-        _register_run_timeout(run_id, timeout_seconds)
-
-        try:
-            def read_stdout() -> None:
-                if not proc.stdout:
-                    return
-                for line in proc.stdout:
-                    stdout_parts.append(line)
-                    log_file.write(line)
-                    log_file.flush()
-
-            def read_stderr() -> None:
-                if not proc.stderr:
-                    return
-                for line in proc.stderr:
-                    stderr_parts.append(line)
-
-            stdout_thread = threading.Thread(target=read_stdout, daemon=True, name="agent-run-stdout")
-            stderr_thread = threading.Thread(target=read_stderr, daemon=True, name="agent-run-stderr")
-            stdout_thread.start()
-            stderr_thread.start()
-
-            started = time.monotonic()
-            sigterm_sent = False
-            sigkill_sent = False
-            enforced_timeout_seconds = timeout_seconds
-
-            while proc.poll() is None:
-                elapsed = time.monotonic() - started
-                current_timeout = get_active_run_timeout(run_id) or timeout_seconds
-                sigterm_at = current_timeout + sigterm_grace_seconds
-                sigkill_at = current_timeout + sigkill_grace_seconds
-                if elapsed >= sigkill_at:
-                    enforced_timeout_seconds = current_timeout
-                    log_file.write(
-                        f"\n=== TIMEOUT ENFORCEMENT ===\n"
-                        f"SIGKILL sent at {elapsed:.1f}s "
-                        f"(configured timeout {current_timeout}s + {sigkill_grace_seconds}s)\n"
-                    )
-                    log_file.flush()
-                    _signal_process_group(proc, signal.SIGKILL)
-                    sigkill_sent = True
-                    break
-                if elapsed >= sigterm_at and not sigterm_sent:
-                    enforced_timeout_seconds = current_timeout
-                    log_file.write(
-                        f"\n=== TIMEOUT ENFORCEMENT ===\n"
-                        f"SIGTERM sent at {elapsed:.1f}s "
-                        f"(configured timeout {current_timeout}s + {sigterm_grace_seconds}s)\n"
-                    )
-                    log_file.flush()
-                    _signal_process_group(proc, signal.SIGTERM)
-                    sigterm_sent = True
-                time.sleep(0.5)
-
-            returncode = proc.wait()
-            stdout_thread.join(timeout=5)
-            stderr_thread.join(timeout=5)
-
-            duration_seconds = time.monotonic() - started
-        finally:
-            _unregister_active_proc(run_id)
-            _unregister_run_timeout(run_id)
-
-    return ClaudeSubprocessResult(
-        returncode=returncode,
-        stdout="".join(stdout_parts),
-        stderr="".join(stderr_parts),
-        duration_seconds=duration_seconds,
-        sigterm_sent=sigterm_sent,
-        sigkill_sent=sigkill_sent,
-        enforced_timeout_seconds=enforced_timeout_seconds,
-    )
 
 
 def _installed_package_version(name: str) -> str:
@@ -489,6 +286,9 @@ def build_system_tools_instructions(agent_name: str, department: str) -> str:
             "# System",
             "",
             "Ubuntu 24.04. OS libraries are already in the image — do not apt-get or run `playwright install-deps`.",
+            "",
+            "Use the `run_shell` tool for shell commands (python, venv, playwright scripts).",
+            "Use MCP tools for workspace files, memory, database, email, and WhatsApp.",
             "",
             f"## python3 ({python_version})",
             "- `python3` and `python` are on PATH. Use them to run scripts.",
@@ -668,56 +468,6 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         prompt = build_prompt(agent, payload, summary_path=paths["summary_path"])
         safe_path(paths["prompt_path"]).write_text(prompt, encoding="utf-8")
 
-        if not shutil.which("claude"):
-            _mark_run_failed(run, log_path, "Claude CLI is not installed", agent=agent)
-            maybe_notify_run(agent.name, run.id, RunStatus.failed.value, RUN_FAILED_MESSAGE)
-            return
-
-        runtime_dir = Path(current_app.config["RUNTIME_DIR"])
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        mcp_config_path = runtime_dir / f"mcp-run-{run.id}.json"
-        mcp_config_path.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "agents44": {
-                            "type": "sse",
-                            "url": f"http://127.0.0.1:{current_app.config['MCP_PORT']}/sse",
-                            "headers": {
-                                "X-Agent-Name": agent.name,
-                                "X-Agent-Department": agent.department,
-                                "X-Run-Id": str(run.id),
-                            },
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        env = os.environ.copy()
-        if current_app.config.get("ANTHROPIC_API_KEY"):
-            env["ANTHROPIC_API_KEY"] = current_app.config["ANTHROPIC_API_KEY"]
-        # Claude CLI maps bypassPermissions to --dangerously-skip-permissions and
-        # exits as uid 0 unless IS_SANDBOX=1. Gunicorn runs as root in this image.
-        env["IS_SANDBOX"] = "1"
-
-        extra_args = get_claude_cli_extra_args()
-        cmd = [
-            "claude",
-            "-p",
-            prompt,
-            "--model",
-            agent.model,
-            "--output-format",
-            "stream-json",
-            "--include-partial-messages",
-            "--verbose",
-            "--mcp-config",
-            str(mcp_config_path),
-            *extra_args,
-        ]
-
         timeout_seconds = agent.timeout_seconds or 300
         sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
         sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
@@ -725,83 +475,100 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
         start_context = _run_start_context(
             run,
             agent,
-            cmd=cmd,
             timeout_seconds=timeout_seconds,
             sigterm_grace_seconds=sigterm_grace_seconds,
             sigkill_grace_seconds=sigkill_grace_seconds,
-            mcp_config_path=mcp_config_path,
             cwd=cwd,
             payload=payload,
         )
         _write_run_log_start(log_path, start_context)
         _log_run_start(start_context)
-        result = _run_claude_subprocess(
-            run.id,
-            log_path,
-            cmd,
-            cwd=cwd,
-            env=env,
-            timeout_seconds=timeout_seconds,
-            sigterm_grace_seconds=sigterm_grace_seconds,
-            sigkill_grace_seconds=sigkill_grace_seconds,
-        )
-        stdout = result.stdout
-        stderr = result.stderr
-        returncode = result.returncode
-        duration_seconds = result.duration_seconds
-        summary_path = safe_path(paths["summary_path"])
-        manual_stop = _consume_manual_stop_request(run.id)
-        sigterm_sent = result.sigterm_sent or manual_stop
+        _register_run_timeout(run.id, timeout_seconds)
 
-        tokens_in, tokens_out, estimated_cost = parse_claude_result(stdout, agent.model)
+        def on_event(line: str) -> None:
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(line)
+                log_file.write("\n")
+                log_file.flush()
+
+        runtime = AgentRuntime()
+        try:
+            result = runtime.run_sync(
+                model_id=agent.model,
+                prompt=prompt,
+                agent_name=agent.name,
+                department=agent.department,
+                run_id=run.id,
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                soft_cancel_grace_seconds=sigterm_grace_seconds,
+                hard_timeout_grace_seconds=sigkill_grace_seconds,
+                handle_key=_run_handle_key(run.id),
+                on_event=on_event,
+            )
+        finally:
+            _unregister_run_timeout(run.id)
+
+        manual_stop = _consume_manual_stop_request(run.id)
+        summary_path = safe_path(paths["summary_path"])
+        tokens_in = result.tokens_in
+        tokens_out = result.tokens_out
+        estimated_cost = result.estimated_cost_usd
+        duration_seconds = result.duration_seconds
 
         status = RunStatus.success
         error_message = None
         exit_note = None
+        returncode = 0
 
-        enforced_timeout_seconds = result.enforced_timeout_seconds
-
-        if result.sigkill_sent:
+        if result.timed_out and result.error and "hard stop" in (result.error or ""):
             status = RunStatus.failed
             error_message = RUN_FAILED_MESSAGE
+            returncode = 137
             exit_note = _enforcement_note(
-                enforced_timeout_seconds,
+                timeout_seconds,
                 sigterm_grace_seconds=sigterm_grace_seconds,
                 sigkill_grace_seconds=sigkill_grace_seconds,
-                sigterm_sent=sigterm_sent,
-                sigkill_sent=True,
+                soft_cancelled=True,
+                hard_stopped=True,
             )
-        elif sigterm_sent:
-            if manual_stop:
-                exit_note = "SIGTERM sent by user"
+        elif result.timed_out or (result.cancelled and not manual_stop and result.error and "timeout" in (result.error or "").lower()):
             if _summary_written(summary_path):
-                if manual_stop:
-                    exit_note = f"{exit_note}; summary.md written after SIGTERM"
-                else:
-                    exit_note = (
-                        f"{_enforcement_note(enforced_timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
-                        "summary.md written after SIGTERM"
-                    )
+                exit_note = (
+                    f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, soft_cancelled=True, hard_stopped=False)}; "
+                    "summary.md written after cancel"
+                )
             else:
                 status = RunStatus.failed
                 error_message = RUN_FAILED_MESSAGE
-                if manual_stop:
-                    exit_note = f"{exit_note}; summary.md missing"
-                else:
-                    exit_note = (
-                        f"{_enforcement_note(enforced_timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, sigterm_sent=True, sigkill_sent=False)}; "
-                        "summary.md missing"
-                    )
-        elif returncode != 0:
+                returncode = 143
+                exit_note = (
+                    f"{_enforcement_note(timeout_seconds, sigterm_grace_seconds=sigterm_grace_seconds, sigkill_grace_seconds=sigkill_grace_seconds, soft_cancelled=True, hard_stopped=False)}; "
+                    "summary.md missing"
+                )
+        elif result.cancelled or manual_stop:
+            if _summary_written(summary_path):
+                exit_note = "Cancelled by user; summary.md written"
+            else:
+                status = RunStatus.failed
+                error_message = RUN_FAILED_MESSAGE
+                returncode = 143
+                exit_note = "Cancelled by user; summary.md missing"
+        elif result.error:
             status = RunStatus.failed
             error_message = RUN_FAILED_MESSAGE
-            exit_note = f"Claude CLI exited with code {returncode}"
+            returncode = 1
+            exit_note = result.error
+        elif not _summary_written(summary_path):
+            status = RunStatus.failed
+            error_message = RUN_FAILED_MESSAGE
+            returncode = 1
+            exit_note = "summary.md missing"
 
         _write_run_log_finish(
             log_path,
             returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
+            transcript=result.transcript,
             duration_seconds=duration_seconds,
             status=status,
             tokens_in=tokens_in,
@@ -809,7 +576,6 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
             estimated_cost_usd=estimated_cost,
             error_message=error_message,
             extra_notes=exit_note,
-            stdout_written=True,
         )
         _log_run_finish(
             {
@@ -824,7 +590,6 @@ def _execute_run(run_id: int, payload: dict | None = None) -> None:
                 "estimated_cost_usd": estimated_cost,
                 "error_message": error_message,
                 "detail": exit_note,
-                "stderr": _truncate_text(stderr) if stderr else None,
             }
         )
         _finalize_run(run, agent, status, error_message, tokens_in, tokens_out, estimated_cost)
@@ -935,8 +700,8 @@ def stop_run(run_id: int) -> SystemAgentRun:
     if run.status != RunStatus.running:
         raise APIClientError("Run is not running", 400)
 
-    proc = _get_active_proc(run_id)
-    if proc is None:
+    handle = get_active_handle(_run_handle_key(run_id))
+    if handle is None:
         raise APIClientError("Run process is not active", 409)
 
     with _manual_stop_lock:
@@ -946,17 +711,16 @@ def stop_run(run_id: int) -> SystemAgentRun:
         log_path = safe_path(run.log_path)
         if log_path.exists():
             with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write("\n=== MANUAL STOP ===\nSIGTERM sent by user\n")
+                log_file.write("\n=== MANUAL STOP ===\nCancel requested by user\n")
                 log_file.flush()
 
-    _signal_process_group(proc, signal.SIGTERM)
+    cancel_active_handle(_run_handle_key(run_id))
     logger.info(
         "AGENT_RUN_STOP %s",
         json.dumps(
             {
                 "run_id": run.id,
                 "agent_id": run.agent_id,
-                "pid": proc.pid,
             },
             default=str,
         ),

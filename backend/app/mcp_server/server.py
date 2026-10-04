@@ -3,7 +3,7 @@ import logging
 import threading
 
 import uvicorn
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -24,22 +24,18 @@ logger = logging.getLogger(__name__)
 
 _mcp_thread: threading.Thread | None = None
 _mcp_started = False
-_mcp_instance: FastMCP | None = None
+_mcp_instance: MCPServer | None = None
 _mcp_port: int | None = None
 
 
-def _build_mcp_server(port: int) -> FastMCP:
+def _build_mcp_server(port: int) -> MCPServer:
     global _mcp_instance, _mcp_port
     if _mcp_instance is not None and _mcp_port == port:
         return _mcp_instance
 
-    mcp = FastMCP(
+    mcp = MCPServer(
         "agents44",
         instructions="Agents44 platform tools for workspace files, agent memory, PostgreSQL, email, and WhatsApp.",
-        host="127.0.0.1",
-        port=port,
-        sse_path="/sse",
-        message_path="/messages/",
     )
 
     @mcp.custom_route("/health", methods=["GET"])
@@ -166,7 +162,7 @@ def start_mcp_server(app, port: int) -> None:
     def _run() -> None:
         global _mcp_started
         mcp = _build_mcp_server(port)
-        starlette_app = mcp.sse_app()
+        starlette_app = mcp.sse_app(sse_path="/sse", message_path="/messages/", host="127.0.0.1")
         config = uvicorn.Config(
             starlette_app,
             host="127.0.0.1",

@@ -183,9 +183,6 @@ RUN apt-get update \
     && mkdir -p /var/lib/psql/data /var/run/postgresql \
     && chown -R psql:psql /var/lib/psql /var/run/postgresql \
     && chmod 775 /var/run/postgresql \
-    && curl -fsSL https://claude.ai/install.sh | bash \
-    && command -v claude
-
 # Dependency artifacts (change only when lockfiles / requirements change)
 COPY --from=python-deps /opt/agents44/venv /opt/agents44/venv
 # Chromium for Python Playwright (PLAYWRIGHT_BROWSERS_PATH). Version-locked to

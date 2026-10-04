@@ -6,14 +6,14 @@
 #   ~/.agents/<name>/.env  →  /opt/agents44/.env
 #
 # Generated once (stable across upgrades — delete the .env to regenerate):
-#   PSQL_PASSWORD, FLASK_SECRET_KEY, DEV_LOGIN_PASSWORD, ANTHROPIC_API_KEY
+#   PSQL_PASSWORD, FLASK_SECRET_KEY, DEV_LOGIN_PASSWORD, provider API keys
 #
-# ANTHROPIC_API_KEY is optional at start (UI comes up; agent runs fail until it is set).
-# Seed it when the instance .env is new or the key is empty:
-#   ANTHROPIC_API_KEY='...' ./lightsail-start.sh <name> [port]
-# Or leave it blank and later: ./set-env-var.sh ~/.agents/<name>/.env ANTHROPIC_API_KEY '...'
+# LLM provider keys are optional at start (UI comes up; agent runs fail until set).
+# Seed when the instance .env is new or the key is empty:
+#   ANTHROPIC_API_KEY='...' GEMINI_API_KEY='...' ./lightsail-start.sh <name> [port]
+# Or leave blank and later: ./set-env-var.sh ~/.agents/<name>/.env ANTHROPIC_API_KEY '...'
 # then re-run this script (or docker restart agents44-<name>).
-# After that the key lives in ~/.agents/<name>/.env — do not export it in ~/.bashrc.
+# After that keys live in ~/.agents/<name>/.env — do not export them in ~/.bashrc.
 #
 # Refreshed from the host environment on every start (when set):
 #   GOOGLE_CLIENT_ID, FRONTEND_URL, DEV_LOGIN_EMAIL, ADMIN_EMAIL, SMTP_*
@@ -24,8 +24,8 @@ PORT="${2:-8080}"
 
 if [ -z "$NAME" ]; then
   echo "Usage: $0 <name> [port]" >&2
-  echo "  Optional: ANTHROPIC_API_KEY FRONTEND_URL GOOGLE_CLIENT_ID DEV_LOGIN_EMAIL DEV_LOGIN_PASSWORD AGENTS44_IMAGE_TAG" >&2
-  echo "  Anthropic key lives in ~/.agents/<name>/.env (do not put it in ~/.bashrc)." >&2
+  echo "  Optional: ANTHROPIC_API_KEY GEMINI_API_KEY FRONTEND_URL GOOGLE_CLIENT_ID DEV_LOGIN_EMAIL DEV_LOGIN_PASSWORD AGENTS44_IMAGE_TAG" >&2
+  echo "  Provider keys live in ~/.agents/<name>/.env (do not put them in ~/.bashrc)." >&2
   exit 1
 fi
 
@@ -40,10 +40,11 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
 fi
 
 # Capture host exports before we source the instance .env.
-# Unset the host Anthropic key so a leftover ~/.bashrc export cannot
+# Unset host provider keys so a leftover ~/.bashrc export cannot
 # override ~/.agents/<name>/.env on upgrade.
 HOST_ANTHROPIC="${ANTHROPIC_API_KEY:-}"
-unset ANTHROPIC_API_KEY
+HOST_GEMINI="${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}"
+unset ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY
 HOST_GOOGLE="${GOOGLE_CLIENT_ID:-}"
 HOST_FRONTEND="${FRONTEND_URL:-}"
 HOST_DEV_EMAIL="${DEV_LOGIN_EMAIL:-}"
@@ -87,13 +88,18 @@ FLASK_SECRET_KEY="${FLASK_SECRET_KEY:-$(rand_secret)}"
 DEV_LOGIN_PASSWORD="${HOST_DEV_PASS:-${DEV_LOGIN_PASSWORD:-$(rand_password | head -c 20)}}"
 DEV_LOGIN_EMAIL="${HOST_DEV_EMAIL:-${DEV_LOGIN_EMAIL:-admin@catch44.co.il}}"
 
-# Anthropic key is per-instance. Host env seeds only when the .env has none.
+# Provider keys are per-instance. Host env seeds only when the .env has none.
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-${HOST_ANTHROPIC:-}}"
-ANTHROPIC_MISSING=0
-if [ -z "${ANTHROPIC_API_KEY}" ]; then
-  ANTHROPIC_MISSING=1
-  echo "WARNING: ANTHROPIC_API_KEY is not set — agent runs will fail until it is added to ${ENV_FILE}" >&2
+GEMINI_API_KEY="${GEMINI_API_KEY:-${HOST_GEMINI:-}}"
+LLM_KEY_MISSING=0
+if [ -z "${ANTHROPIC_API_KEY}" ] && [ -z "${GEMINI_API_KEY}" ]; then
+  LLM_KEY_MISSING=1
+  echo "WARNING: No LLM provider API key set — agent runs will fail until ANTHROPIC_API_KEY or GEMINI_API_KEY is added to ${ENV_FILE}" >&2
 fi
+DEFAULT_MODEL="${DEFAULT_MODEL:-anthropic/claude-sonnet-4-6}"
+SUPPORTED_MODELS="${SUPPORTED_MODELS:-anthropic/claude-sonnet-4-6,anthropic/claude-haiku-4-5-20251001,gemini/gemini-2.5-flash,gemini/gemini-2.5-pro}"
+LITELLM_PROXY_PORT="${LITELLM_PROXY_PORT:-4000}"
+LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-agents44-litellm-local}"
 
 # Always refresh from host when provided
 GOOGLE_CLIENT_ID="${HOST_GOOGLE:-${GOOGLE_CLIENT_ID:-}}"
@@ -113,7 +119,7 @@ umask 077
 cat > "$ENV_FILE" <<EOF
 # Agents44 instance "${NAME}" — mounted at /opt/agents44/.env
 # Stable secrets persist across lightsail-start upgrades.
-# Delete this file to regenerate PSQL/Flask/dev-login secrets (and the Anthropic key).
+# Delete this file to regenerate PSQL/Flask/dev-login secrets (and provider keys).
 
 PSQL_HOST=localhost
 PSQL_PORT=5432
@@ -136,7 +142,11 @@ SMTP_APP_PASSWORD=${SMTP_APP_PASSWORD}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-DEFAULT_MODEL=
+GEMINI_API_KEY=${GEMINI_API_KEY}
+SUPPORTED_MODELS=${SUPPORTED_MODELS}
+DEFAULT_MODEL=${DEFAULT_MODEL}
+LITELLM_PROXY_PORT=${LITELLM_PROXY_PORT}
+LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
 
 MCP_PORT=${MCP_PORT}
 REACT_APP_API_URL=/api
@@ -174,10 +184,10 @@ echo "  Image:     ${IMAGE}"
 echo "  URL:       ${FRONTEND_URL}"
 echo "  Health:    ${FRONTEND_URL%/}/api/health"
 echo "  Env file:  ${ENV_FILE}  ($( [ "$ENV_REUSED" -eq 1 ] && echo reused || echo created ))"
-if [ "$ANTHROPIC_MISSING" -eq 1 ]; then
-  echo "  Anthropic:  EMPTY — set ANTHROPIC_API_KEY in ${ENV_FILE} then re-run this script"
+if [ "$LLM_KEY_MISSING" -eq 1 ]; then
+  echo "  LLM keys:   EMPTY — set ANTHROPIC_API_KEY and/or GEMINI_API_KEY in ${ENV_FILE} then re-run this script"
 else
-  echo "  Anthropic:  stored in ${ENV_FILE} (not ~/.bashrc)"
+  echo "  LLM keys:   stored in ${ENV_FILE} (not ~/.bashrc)"
 fi
 echo "  Admin login: ${DEV_LOGIN_EMAIL}"
 echo "  Admin pass:  ${DEV_LOGIN_PASSWORD}"

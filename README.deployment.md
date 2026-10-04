@@ -8,7 +8,7 @@ One Ubuntu 24.04 image runs everywhere: local Docker Compose and AWS. GitHub Act
 |-------|-----|
 | Frontend build (`npm`), Python venv, gunicorn, nginx | `root` |
 | PostgreSQL | OS user `psql` |
-| Claude CLI agent runs | `root` with `IS_SANDBOX=1` (CLI blocks `bypassPermissions` as uid 0 otherwise) |
+| Agent runs (Pydantic AI + LiteLLM + MCP) | `root` (gunicorn) |
 
 Tag format: `1.0.<commit-count>.<git-hash>` (example `1.0.59.19dbf81`) plus `latest`.
 
@@ -86,13 +86,13 @@ After the pipeline has pushed to ECR, the simplest managed option is **AWS App R
 2. Source: **Container registry** → **Amazon ECR** → pick `agents44:latest` (or a version tag)
 3. Deployment: Automatic (redeploy when `latest` changes) or Manual
 4. Port: **80**
-5. Environment / secrets: put the same keys as `.env` (at least `ANTHROPIC_API_KEY`, `FLASK_SECRET_KEY`, `PSQL_*`, `FRONTEND_URL`, Google/SMTP as needed). App Runner injects env vars; you can also mount a secret later via Secrets Manager.
+5. Environment / secrets: put the same keys as `.env` (at least one LLM provider key such as `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, plus `FLASK_SECRET_KEY`, `PSQL_*`, `FRONTEND_URL`, Google/SMTP as needed). App Runner injects env vars; you can also mount a secret later via Secrets Manager.
 6. Create → wait for the service URL
 
 **Caveats for this all-in-one image on App Runner / Fargate:**
 
 - Postgres data lives inside the container filesystem unless you attach durable storage. For a real environment, attach an **EFS** volume (or move DB to **RDS** later). App Runner has limited persistent storage; **ECS Fargate + EFS** is the next step up if you need durable Postgres/workspace.
-- Give the task/service enough CPU/memory (this image runs nginx + gunicorn + Postgres + Claude CLI).
+- Give the task/service enough CPU/memory (this image runs nginx + gunicorn + Postgres + LiteLLM gateway + MCP).
 - Terminate TLS at App Runner / ALB; the container listens on HTTP `:80`.
 
 **ECS Fargate** (still simple, more control): create a task definition with the ECR image, port 80, env from Secrets Manager, optional EFS mounts for `/var/lib/psql/data` and `/opt/agents44/workspace`, then a service behind an Application Load Balancer.

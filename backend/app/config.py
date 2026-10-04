@@ -27,6 +27,23 @@ def _database_url() -> str:
     return f"postgresql+psycopg2://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{db}"
 
 
+def _parse_supported_models(raw: str) -> list[str]:
+    models: list[str] = []
+    for part in raw.replace("\n", ",").split(","):
+        model = part.strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+_DEFAULT_SUPPORTED_MODELS = [
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5-20251001",
+    "gemini/gemini-2.5-flash",
+    "gemini/gemini-2.5-pro",
+]
+
+
 class Config:
     SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret")
     SQLALCHEMY_DATABASE_URI = _database_url()
@@ -45,8 +62,13 @@ class Config:
     ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@catch44.co.il")
     DEV_LOGIN_EMAIL = os.getenv("DEV_LOGIN_EMAIL", "").strip()
     DEV_LOGIN_PASSWORD = os.getenv("DEV_LOGIN_PASSWORD", "")
-    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "")
+    # LLM provider API keys live in Settings (system_params), not Config/.env.
+    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "anthropic/claude-sonnet-4-6")
+    SUPPORTED_MODELS_CONFIG = _parse_supported_models(
+        os.getenv("SUPPORTED_MODELS", ",".join(_DEFAULT_SUPPORTED_MODELS))
+    )
+    LITELLM_PROXY_PORT = int(os.getenv("LITELLM_PROXY_PORT", "4000"))
+    LITELLM_MASTER_KEY = os.getenv("LITELLM_MASTER_KEY", "agents44-litellm-local")
     FLASK_ENV = os.getenv("FLASK_ENV", "")
     DEBUG = os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
     SESSION_COOKIE_HTTPONLY = True

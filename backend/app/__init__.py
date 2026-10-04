@@ -23,9 +23,10 @@ from app.config import Config
 from app.errors import api_endpoint
 from app.extensions import db
 from app.mcp_server.server import start_mcp_server
+from app.services.litellm_proxy import start_litellm_proxy
 from app.services.model_registry import init_model_registry
 from app.services.outbound_email import init_email_sender
-from app.services.params import seed_system_params
+from app.services.params import any_provider_api_key_configured, seed_system_params
 from app.services.scheduler import init_scheduler
 from app.services.workspace import ensure_workspace_layout
 from app.version import app_version
@@ -157,6 +158,15 @@ def create_app() -> Flask:
             if not app.config.get("MCP_STARTED"):
                 start_mcp_server(app, app.config["MCP_PORT"])
                 app.config["MCP_STARTED"] = True
+            if not app.config.get("LITELLM_STARTED"):
+                # Always start the gateway; provider keys live in Settings (system_params).
+                start_litellm_proxy(app)
+                if not any_provider_api_key_configured():
+                    logger.warning(
+                        "No LLM provider API key in Settings yet "
+                        "(ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY). "
+                        "Add keys under Settings — agent runs will fail until then."
+                    )
 
     global _flask_app
     _flask_app = app

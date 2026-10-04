@@ -425,6 +425,7 @@ function formatStdoutSection(lines: string[]): string {
 const SECTION_MARKERS = [
   "=== STDERR ===",
   "=== TRANSCRIPT (thinking + text) ===",
+  "=== TRANSCRIPT ===",
   "=== RUN END ===",
   "=== TIMEOUT ENFORCEMENT ===",
 ] as const;

@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from app.auth import (
     auth_google,
@@ -12,6 +12,7 @@ from app.auth import (
 from app.errors import api_endpoint
 from app.extensions import db
 from app.models import SystemParam
+from app.services.litellm_proxy import refresh_provider_keys, start_litellm_proxy
 
 auth_bp = Blueprint("auth", __name__)
 params_bp = Blueprint("system_params", __name__)
@@ -91,4 +92,8 @@ def update_params():
         .order_by(SystemParam.key)
         .all()
     )
+    # Push any *_API_KEY Settings values into the LiteLLM process env immediately.
+    refresh_provider_keys(current_app._get_current_object())
+    if not current_app.config.get("LITELLM_STARTED"):
+        start_litellm_proxy(current_app._get_current_object())
     return jsonify([row.to_dict() for row in rows])

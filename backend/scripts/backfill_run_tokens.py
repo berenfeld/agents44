@@ -10,19 +10,24 @@ from pathlib import Path
 from app import create_app
 from app.extensions import db
 from app.models import SystemAgentRun
-from app.services.model_registry import parse_claude_result
+from app.services.model_registry import estimate_cost
 
-STDOUT_SECTION_RE = re.compile(
-    r"=== STDOUT ===\n(.*?)(?:\n=== STDERR ===|\Z)",
-    re.DOTALL,
-)
+TOKENS_RE = re.compile(r"^tokens_in:\s*(\d+)\s*$", re.MULTILINE)
+TOKENS_OUT_RE = re.compile(r"^tokens_out:\s*(\d+)\s*$", re.MULTILINE)
+COST_RE = re.compile(r"^estimated_cost_usd:\s*([0-9.]+)\s*$", re.MULTILINE)
 
 
-def extract_stdout_from_log(log_text: str) -> str:
-    match = STDOUT_SECTION_RE.search(log_text)
-    if not match:
-        return ""
-    return match.group(1).rstrip("\n")
+def parse_usage_from_log(log_text: str, model: str | None) -> tuple[int | None, int | None, float | None]:
+    tin_match = TOKENS_RE.search(log_text)
+    tout_match = TOKENS_OUT_RE.search(log_text)
+    cost_match = COST_RE.search(log_text)
+    tokens_in = int(tin_match.group(1)) if tin_match else None
+    tokens_out = int(tout_match.group(1)) if tout_match else None
+    if cost_match:
+        cost_usd = round(float(cost_match.group(1)), 6)
+    else:
+        cost_usd = estimate_cost(model or "", tokens_in, tokens_out) if model else None
+    return tokens_in, tokens_out, cost_usd
 
 
 def main() -> int:
@@ -49,11 +54,12 @@ def main() -> int:
                 print(f"run {run.id}: log missing at {log_file}")
                 continue
 
-            stdout = extract_stdout_from_log(log_file.read_text(encoding="utf-8"))
-            tokens_in, tokens_out, cost_usd = parse_claude_result(stdout, run.model)
+            tokens_in, tokens_out, cost_usd = parse_usage_from_log(
+                log_file.read_text(encoding="utf-8"), run.model
+            )
             if tokens_in is None and tokens_out is None and cost_usd is None:
                 no_result += 1
-                print(f"run {run.id}: no Claude result envelope in log")
+                print(f"run {run.id}: no usage fields in log")
                 continue
 
             changed = (

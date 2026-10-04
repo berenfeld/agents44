@@ -1,8 +1,7 @@
 import logging
 
-from mcp.server.fastmcp import Context
-from mcp.server.fastmcp.exceptions import ToolError
-from starlette.requests import Request
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
 
 from app.errors import APIClientError
 from app.mcp_server.tools import set_run_context
@@ -11,18 +10,17 @@ logger = logging.getLogger(__name__)
 
 
 def apply_run_context(ctx: Context) -> None:
-    request = _request_from_context(ctx)
-    if request is None:
-        raise ToolError("Agent context required")
-
-    agent_name = request.headers.get("X-Agent-Name", "").strip()
+    headers = ctx.headers or {}
+    # Starlette headers are case-insensitive; normalize for lookup.
+    lowered = {str(k).lower(): str(v) for k, v in headers.items()}
+    agent_name = (lowered.get("x-agent-name") or "").strip()
     if not agent_name:
         raise ToolError("Agent context required (missing X-Agent-Name header)")
 
     set_run_context(
         agent_name,
-        request.headers.get("X-Agent-Department", ""),
-        int(request.headers.get("X-Run-Id", "0") or 0),
+        (lowered.get("x-agent-department") or "").strip(),
+        int(lowered.get("x-run-id") or "0"),
     )
 
 
@@ -41,13 +39,3 @@ def run_tool(ctx: Context, fn, /, *args, **kwargs):
     except Exception as exc:
         logger.exception("MCP tool %s failed", getattr(fn, "__name__", "unknown"))
         raise ToolError("Tool execution failed") from exc
-
-
-def _request_from_context(ctx: Context) -> Request | None:
-    request_context = ctx.request_context
-    if request_context is None:
-        return None
-    request = request_context.request
-    if isinstance(request, Request):
-        return request
-    return None

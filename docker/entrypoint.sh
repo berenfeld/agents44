@@ -10,9 +10,6 @@ PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort | tail -1)"
 export PATH="/root/.local/bin:${PG_BIN}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export LANG="${LANG:-en_US.UTF-8}"
 export LC_ALL="${LC_ALL:-en_US.UTF-8}"
-# Claude CLI refuses --permission-mode bypassPermissions as root unless it
-# believes it is in a sandbox. This image is the sandbox.
-export IS_SANDBOX=1
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -128,9 +125,7 @@ echo "Running database migrations"
 cd "$APP_DIR/backend"
 "$APP_DIR/venv/bin/alembic" upgrade head
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "WARNING: ANTHROPIC_API_KEY is not set — agent runs will fail"
-fi
+echo "NOTE: LLM provider API keys are configured in Settings (system_params), not .env"
 
 echo "Starting gunicorn"
 cd "$APP_DIR/backend"

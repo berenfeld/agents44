@@ -1,9 +1,7 @@
-import json
 import logging
 import os
 from typing import Any
 
-import requests
 from flask import current_app
 
 from app.errors import ModelDiscoveryError
@@ -13,38 +11,32 @@ from app.services.params import get_param_json
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-ANTHROPIC_VERSION = "2023-06-01"
+
+def normalize_model_id(model: str) -> str:
+    """Map legacy bare Claude ids to LiteLLM provider-prefixed ids."""
+    value = (model or "").strip()
+    if not value:
+        return value
+    if "/" in value:
+        return value
+    if value.startswith("claude"):
+        return f"anthropic/{value}"
+    if value.startswith("gemini"):
+        return f"gemini/{value}"
+    return value
 
 
-def discover_models() -> list[str]:
-    api_key = current_app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise ModelDiscoveryError("ANTHROPIC_API_KEY is not set")
-
-    response = requests.get(
-        ANTHROPIC_MODELS_URL,
-        headers={
-            "anthropic-version": ANTHROPIC_VERSION,
-            "x-api-key": api_key,
-        },
-        timeout=30,
-    )
-    if not response.ok:
-        raise ModelDiscoveryError(f"Anthropic models API failed with status {response.status_code}")
-
-    models = []
-    for item in response.json().get("data", []):
-        model_id = item.get("id", "")
-        if isinstance(model_id, str) and model_id.startswith("claude"):
-            models.append(model_id)
+def configured_models(app=None) -> list[str]:
+    cfg = app.config if app is not None else current_app.config
+    models = list(cfg.get("SUPPORTED_MODELS_CONFIG") or [])
     if not models:
-        raise ModelDiscoveryError("Anthropic models API returned no supported models")
-    return models
+        raise ModelDiscoveryError("SUPPORTED_MODELS is empty")
+    return [normalize_model_id(m) for m in models]
 
 
-def resolve_default_model(models: list[str]) -> str:
-    configured = current_app.config.get("DEFAULT_MODEL") or os.getenv("DEFAULT_MODEL", "")
+def resolve_default_model(models: list[str], app=None) -> str:
+    cfg = app.config if app is not None else current_app.config
+    configured = normalize_model_id(cfg.get("DEFAULT_MODEL") or os.getenv("DEFAULT_MODEL", ""))
     if configured and configured in models:
         return configured
     return models[0]
@@ -52,21 +44,26 @@ def resolve_default_model(models: list[str]) -> str:
 
 def init_model_registry(app) -> None:
     with app.app_context():
-        api_key = (app.config.get("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or "").strip()
-        if not api_key:
-            logger.warning(
-                "ANTHROPIC_API_KEY is not set — skipping model discovery; agent runs will fail"
-            )
+        try:
+            models = configured_models(app)
+        except ModelDiscoveryError as exc:
+            logger.warning("%s — agent runs will fail until models are configured", exc)
             app.config["SUPPORTED_MODELS"] = []
             app.config["DEFAULT_MODEL_RESOLVED"] = ""
             return
-        models = discover_models()
-        default_model = resolve_default_model(models)
+
+        default_model = resolve_default_model(models, app)
         app.config["SUPPORTED_MODELS"] = models
         app.config["DEFAULT_MODEL_RESOLVED"] = default_model
 
         agents = SystemAgent.query.all()
         for agent in agents:
+            remapped = normalize_model_id(agent.model)
+            if remapped != agent.model:
+                logger.warning(
+                    "Agent %s model %s remapped to %s", agent.name, agent.model, remapped
+                )
+                agent.model = remapped
             if agent.model not in models:
                 old = agent.model
                 agent.model = default_model
@@ -89,13 +86,7 @@ def get_default_model() -> str:
 
 
 def validate_model(model: str) -> bool:
-    return model in get_supported_models()
-
-
-def _input_tokens_from_usage(usage: dict[str, Any]) -> int:
-    return int(usage.get("input_tokens") or 0) + int(
-        usage.get("cache_creation_input_tokens") or 0
-    ) + int(usage.get("cache_read_input_tokens") or 0)
+    return normalize_model_id(model) in get_supported_models()
 
 
 CACHE_WRITE_INPUT_MULTIPLIER = 1.25
@@ -104,16 +95,18 @@ CACHE_READ_INPUT_MULTIPLIER = 0.1
 
 def estimate_cost_from_usage(model: str, usage: dict[str, Any]) -> float | None:
     pricing_map: dict[str, Any] = get_param_json("MODEL_PRICING", {}) or {}
-    pricing = pricing_map.get(model)
+    pricing = pricing_map.get(model) or pricing_map.get(normalize_model_id(model))
+    if not pricing and "/" in model:
+        pricing = pricing_map.get(model.split("/", 1)[1])
     if not pricing:
         logger.warning("No MODEL_PRICING entry for model %s", model)
         return None
     input_per_m = float(pricing["input_per_million"])
     output_per_m = float(pricing["output_per_million"])
-    tin = int(usage.get("input_tokens") or 0)
+    tin = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
     cc = int(usage.get("cache_creation_input_tokens") or 0)
     cr = int(usage.get("cache_read_input_tokens") or 0)
-    tout = int(usage.get("output_tokens") or 0)
+    tout = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
     cost = (
         tin * input_per_m / 1_000_000
         + cc * input_per_m * CACHE_WRITE_INPUT_MULTIPLIER / 1_000_000
@@ -123,123 +116,13 @@ def estimate_cost_from_usage(model: str, usage: dict[str, Any]) -> float | None:
     return round(cost, 6)
 
 
-def _sum_assistant_usages(stdout: str, model: str) -> tuple[int | None, int | None, float | None]:
-    tokens_in = 0
-    tokens_out = 0
-    cost_usd = 0.0
-    found = False
-    has_cost = False
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if data.get("type") != "assistant":
-            continue
-        usage = (data.get("message") or {}).get("usage")
-        if not isinstance(usage, dict):
-            continue
-        found = True
-        tokens_in += _input_tokens_from_usage(usage)
-        tokens_out += int(usage.get("output_tokens") or 0)
-        turn_cost = estimate_cost_from_usage(model, usage)
-        if turn_cost is not None:
-            cost_usd += turn_cost
-            has_cost = True
-
-    if not found:
-        return None, None, None
-    return tokens_in, tokens_out, round(cost_usd, 6) if has_cost else None
-
-
-def _find_claude_result(stdout: str) -> dict[str, Any] | None:
-    result: dict[str, Any] | None = None
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if data.get("type") == "result":
-            result = data
-
-    if result is not None:
-        return result
-
-    stripped_stdout = stdout.strip()
-    if not stripped_stdout.startswith("{"):
+def estimate_cost(model: str, tokens_in: int | None, tokens_out: int | None) -> float | None:
+    if tokens_in is None and tokens_out is None:
         return None
-    try:
-        data = json.loads(stripped_stdout)
-    except json.JSONDecodeError:
-        return None
-    if data.get("type") == "result":
-        return data
-    return None
-
-
-def extract_claude_text(stdout: str) -> str:
-    """Return the operator-visible assistant reply from Claude CLI stream-json stdout."""
-    result = _find_claude_result(stdout)
-    if result is not None:
-        text = result.get("result")
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-
-    parts: list[str] = []
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if data.get("type") != "assistant":
-            continue
-        message = data.get("message") or {}
-        for block in message.get("content", []) or []:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "text":
-                text = block.get("text") or ""
-                if text:
-                    parts.append(text)
-    return "".join(parts).strip()
-
-
-def claude_result_is_error(stdout: str) -> bool:
-    result = _find_claude_result(stdout)
-    if result is None:
-        return False
-    return bool(result.get("is_error")) or result.get("subtype") == "error"
-
-
-def parse_claude_result(stdout: str, model: str | None = None) -> tuple[int | None, int | None, float | None]:
-    """Return (tokens_in, tokens_out, total_cost_usd) from CLI stdout.
-
-    Prefer the final ``type=result`` envelope (authoritative ``total_cost_usd``).
-    For interrupted runs with no result line, sum per-turn assistant ``usage``.
-    """
-    result = _find_claude_result(stdout)
-    if result is not None:
-        usage = result.get("usage")
-        tokens_in: int | None = None
-        tokens_out: int | None = None
-        if isinstance(usage, dict):
-            tokens_in = _input_tokens_from_usage(usage)
-            output_tokens = usage.get("output_tokens")
-            tokens_out = int(output_tokens) if output_tokens is not None else None
-
-        total_cost = result.get("total_cost_usd")
-        cost_usd = round(float(total_cost), 6) if total_cost is not None else None
-        return tokens_in, tokens_out, cost_usd
-
-    if model:
-        return _sum_assistant_usages(stdout, model)
-    return None, None, None
+    return estimate_cost_from_usage(
+        model,
+        {
+            "input_tokens": tokens_in or 0,
+            "output_tokens": tokens_out or 0,
+        },
+    )

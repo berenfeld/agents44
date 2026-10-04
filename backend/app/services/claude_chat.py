@@ -1,17 +1,8 @@
 import json
 import logging
-import os
 import queue
-import shutil
-import signal
-import subprocess
 import threading
-import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-
-from flask import current_app
 
 from app.errors import APIClientError
 from app.extensions import db
@@ -24,11 +15,11 @@ from app.models import (
 )
 from app.models.claude_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
 from app.services.agent_runner import build_system_tools_instructions
+from app.services.agent_runtime import AgentRuntime
+from app.services.agent_runtime.runtime import cancel_active_handle, get_active_handle
 from app.services.db_provisioning import build_agent_db_instructions
-from app.services.model_registry import claude_result_is_error, extract_claude_text, parse_claude_result
 from app.services.outbound_email import build_email_instructions
 from app.services.params import (
-    get_claude_cli_extra_args,
     get_timeout_sigkill_grace_seconds,
     get_timeout_sigterm_grace_seconds,
 )
@@ -39,8 +30,6 @@ logger = logging.getLogger(__name__)
 
 _chat_queue: queue.Queue = queue.Queue()
 _worker_started = False
-_active_procs: dict[int, subprocess.Popen] = {}
-_active_procs_lock = threading.Lock()
 _manual_stop_requested: set[int] = set()
 _manual_stop_lock = threading.Lock()
 
@@ -48,14 +37,8 @@ CHAT_FAILED_MESSAGE = "Claude failed to reply"
 TITLE_PREVIEW_CHARS = 48
 
 
-@dataclass(frozen=True)
-class ClaudeChatSubprocessResult:
-    returncode: int
-    stdout: str
-    stderr: str
-    duration_seconds: float
-    sigterm_sent: bool
-    sigkill_sent: bool
+def _chat_handle_key(message_id: int) -> str:
+    return f"chat:{message_id}"
 
 
 def _title_from_prompt(content: str) -> str:
@@ -63,30 +46,6 @@ def _title_from_prompt(content: str) -> str:
     if len(one_line) <= TITLE_PREVIEW_CHARS:
         return one_line[:MAX_CONVERSATION_TITLE_LEN] or DEFAULT_CONVERSATION_TITLE
     return f"{one_line[:TITLE_PREVIEW_CHARS]}..."
-
-
-def _signal_process_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
-    if proc.poll() is not None:
-        return
-    try:
-        os.killpg(proc.pid, sig)
-    except ProcessLookupError:
-        pass
-
-
-def _register_active_proc(message_id: int, proc: subprocess.Popen) -> None:
-    with _active_procs_lock:
-        _active_procs[message_id] = proc
-
-
-def _unregister_active_proc(message_id: int) -> None:
-    with _active_procs_lock:
-        _active_procs.pop(message_id, None)
-
-
-def _get_active_proc(message_id: int) -> subprocess.Popen | None:
-    with _active_procs_lock:
-        return _active_procs.get(message_id)
 
 
 def _consume_manual_stop_request(message_id: int) -> bool:
@@ -165,82 +124,6 @@ def build_chat_prompt(agent: SystemAgent, messages: list[SystemClaudeMessage]) -
     return "\n".join(lines).strip() + "\n"
 
 
-def _run_claude_chat_subprocess(
-    message_id: int,
-    cmd: list[str],
-    *,
-    cwd: str,
-    env: dict[str, str],
-    timeout_seconds: int,
-    sigterm_grace_seconds: int,
-    sigkill_grace_seconds: int,
-) -> ClaudeChatSubprocessResult:
-    stdout_parts: list[str] = []
-    stderr_parts: list[str] = []
-
-    proc = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-        start_new_session=True,
-    )
-    _register_active_proc(message_id, proc)
-
-    try:
-        def read_stdout() -> None:
-            if not proc.stdout:
-                return
-            for line in proc.stdout:
-                stdout_parts.append(line)
-
-        def read_stderr() -> None:
-            if not proc.stderr:
-                return
-            for line in proc.stderr:
-                stderr_parts.append(line)
-
-        stdout_thread = threading.Thread(target=read_stdout, daemon=True, name="claude-chat-stdout")
-        stderr_thread = threading.Thread(target=read_stderr, daemon=True, name="claude-chat-stderr")
-        stdout_thread.start()
-        stderr_thread.start()
-
-        started = time.monotonic()
-        sigterm_sent = False
-        sigkill_sent = False
-        sigterm_at = timeout_seconds + sigterm_grace_seconds
-        sigkill_at = timeout_seconds + sigkill_grace_seconds
-
-        while proc.poll() is None:
-            elapsed = time.monotonic() - started
-            if elapsed >= sigkill_at:
-                _signal_process_group(proc, signal.SIGKILL)
-                sigkill_sent = True
-                break
-            if elapsed >= sigterm_at and not sigterm_sent:
-                _signal_process_group(proc, signal.SIGTERM)
-                sigterm_sent = True
-            time.sleep(0.5)
-
-        returncode = proc.wait()
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
-        duration_seconds = time.monotonic() - started
-    finally:
-        _unregister_active_proc(message_id)
-
-    return ClaudeChatSubprocessResult(
-        returncode=returncode,
-        stdout="".join(stdout_parts),
-        stderr="".join(stderr_parts),
-        duration_seconds=duration_seconds,
-        sigterm_sent=sigterm_sent,
-        sigkill_sent=sigkill_sent,
-    )
-
-
 def _mark_message_failed(message: SystemClaudeMessage, detail: str) -> None:
     message.status = ClaudeMessageStatus.failed
     message.error_message = CHAT_FAILED_MESSAGE
@@ -289,54 +172,6 @@ def _execute_chat(assistant_message_id: int) -> None:
         )
         prompt = build_chat_prompt(agent, history)
 
-        if not shutil.which("claude"):
-            _mark_message_failed(message, "Claude CLI is not installed")
-            return
-
-        runtime_dir = Path(current_app.config["RUNTIME_DIR"])
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        mcp_config_path = runtime_dir / f"mcp-chat-{message.id}.json"
-        mcp_config_path.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "agents44": {
-                            "type": "sse",
-                            "url": f"http://127.0.0.1:{current_app.config['MCP_PORT']}/sse",
-                            "headers": {
-                                "X-Agent-Name": agent.name,
-                                "X-Agent-Department": agent.department,
-                                "X-Run-Id": "0",
-                                "X-Conversation-Id": str(conversation.id),
-                            },
-                        }
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        env = os.environ.copy()
-        if current_app.config.get("ANTHROPIC_API_KEY"):
-            env["ANTHROPIC_API_KEY"] = current_app.config["ANTHROPIC_API_KEY"]
-        env["IS_SANDBOX"] = "1"
-
-        extra_args = get_claude_cli_extra_args()
-        cmd = [
-            "claude",
-            "-p",
-            prompt,
-            "--model",
-            agent.model,
-            "--output-format",
-            "stream-json",
-            "--include-partial-messages",
-            "--verbose",
-            "--mcp-config",
-            str(mcp_config_path),
-            *extra_args,
-        ]
-
         timeout_seconds = agent.timeout_seconds or 300
         sigterm_grace_seconds = get_timeout_sigterm_grace_seconds()
         sigkill_grace_seconds = get_timeout_sigkill_grace_seconds()
@@ -351,58 +186,63 @@ def _execute_chat(assistant_message_id: int) -> None:
                     "agent_id": agent.id,
                     "agent_name": agent.name,
                     "model": agent.model,
+                    "runtime": "pydantic-ai+litellm",
                     "timeout_seconds": timeout_seconds,
                 },
                 default=str,
             ),
         )
 
-        result = _run_claude_chat_subprocess(
-            message.id,
-            cmd,
+        runtime = AgentRuntime()
+        result = runtime.run_sync(
+            model_id=agent.model,
+            prompt=prompt,
+            agent_name=agent.name,
+            department=agent.department,
+            run_id=0,
+            conversation_id=conversation.id,
             cwd=cwd,
-            env=env,
             timeout_seconds=timeout_seconds,
-            sigterm_grace_seconds=sigterm_grace_seconds,
-            sigkill_grace_seconds=sigkill_grace_seconds,
+            soft_cancel_grace_seconds=sigterm_grace_seconds,
+            hard_timeout_grace_seconds=sigkill_grace_seconds,
+            handle_key=_chat_handle_key(message.id),
         )
         manual_stop = _consume_manual_stop_request(message.id)
-        reply = extract_claude_text(result.stdout)
-        tokens_in, tokens_out, estimated_cost = parse_claude_result(result.stdout, agent.model)
+        reply = result.output
 
         status = ClaudeMessageStatus.complete
         error_message = None
         detail = None
 
-        if result.sigkill_sent:
+        if result.timed_out and result.error and "hard stop" in (result.error or ""):
             status = ClaudeMessageStatus.failed
             error_message = CHAT_FAILED_MESSAGE
-            detail = f"Exceeded timeout ({timeout_seconds}s); SIGKILL sent"
-        elif result.sigterm_sent or manual_stop:
+            detail = f"Exceeded timeout ({timeout_seconds}s); hard stop"
+        elif result.timed_out or (result.cancelled and not manual_stop):
             if reply:
-                detail = "Stopped after partial reply" if manual_stop else "Timed out after partial reply"
+                detail = "Timed out after partial reply"
             else:
                 status = ClaudeMessageStatus.failed
                 error_message = CHAT_FAILED_MESSAGE
-                detail = "Stopped by user" if manual_stop else f"Exceeded timeout ({timeout_seconds}s); SIGTERM sent"
-        elif claude_result_is_error(result.stdout):
-            status = ClaudeMessageStatus.failed
-            error_message = CHAT_FAILED_MESSAGE
-            detail = reply or "Claude returned an error"
-        elif result.returncode != 0:
+                detail = f"Exceeded timeout ({timeout_seconds}s)"
+        elif result.cancelled or manual_stop:
             if reply:
-                detail = f"Claude CLI exited with code {result.returncode}"
+                detail = "Stopped after partial reply"
             else:
                 status = ClaudeMessageStatus.failed
                 error_message = CHAT_FAILED_MESSAGE
-                detail = f"Claude CLI exited with code {result.returncode}"
+                detail = "Stopped by user"
+        elif result.error:
+            status = ClaudeMessageStatus.failed
+            error_message = CHAT_FAILED_MESSAGE
+            detail = result.error
 
         message.content = reply
         message.status = status
         message.error_message = error_message
-        message.tokens_in = tokens_in
-        message.tokens_out = tokens_out
-        message.estimated_cost_usd = estimated_cost
+        message.tokens_in = result.tokens_in
+        message.tokens_out = result.tokens_out
+        message.estimated_cost_usd = result.estimated_cost_usd
         message.finished_at = datetime.now(timezone.utc)
         conversation.updated_at = datetime.now(timezone.utc)
         db.session.commit()
@@ -414,11 +254,10 @@ def _execute_chat(assistant_message_id: int) -> None:
                     "conversation_id": conversation.id,
                     "agent_id": agent.id,
                     "status": status.value,
-                    "exit_code": result.returncode,
                     "duration_seconds": round(result.duration_seconds, 3),
-                    "tokens_in": tokens_in,
-                    "tokens_out": tokens_out,
-                    "estimated_cost_usd": estimated_cost,
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "estimated_cost_usd": result.estimated_cost_usd,
                     "error_message": error_message,
                     "detail": detail,
                 },
@@ -545,20 +384,19 @@ def stop_chat(conversation: SystemClaudeConversation) -> SystemClaudeConversatio
     if not pending:
         raise APIClientError("Claude is not responding", 400)
 
-    proc = _get_active_proc(pending.id)
-    if proc is None:
+    handle = get_active_handle(_chat_handle_key(pending.id))
+    if handle is None:
         raise APIClientError("Claude process is not active", 409)
 
     with _manual_stop_lock:
         _manual_stop_requested.add(pending.id)
-    _signal_process_group(proc, signal.SIGTERM)
+    cancel_active_handle(_chat_handle_key(pending.id))
     logger.info(
         "CLAUDE_CHAT_STOP %s",
         json.dumps(
             {
                 "message_id": pending.id,
                 "conversation_id": conversation.id,
-                "pid": proc.pid,
             },
             default=str,
         ),
