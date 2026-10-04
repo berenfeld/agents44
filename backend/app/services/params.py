@@ -37,8 +37,7 @@ LLM_API_KEY_PARAMS = (
 DEFAULT_SUPPORTED_MODELS = [
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5-20251001",
-    "gemini/gemini-2.5-flash",
-    "gemini/gemini-2.5-pro",
+    "gemini/gemini-3.8-flash",
 ]
 
 DEFAULT_MODEL_PRICING = {
@@ -82,13 +81,10 @@ DEFAULT_MODEL_PRICING = {
         "input_per_million": 1.0,
         "output_per_million": 5.0,
     },
-    "gemini/gemini-2.5-flash": {
-        "input_per_million": 0.3,
-        "output_per_million": 2.5,
-    },
-    "gemini/gemini-2.5-pro": {
-        "input_per_million": 1.25,
-        "output_per_million": 10.0,
+    # Gemini 3.8 Flash introductory pricing through 2026-12-31 (Google AI Studio).
+    "gemini/gemini-3.8-flash": {
+        "input_per_million": 0.75,
+        "output_per_million": 3.75,
     },
 }
 
@@ -277,23 +273,23 @@ def any_provider_api_key_configured() -> bool:
 
 
 def _ensure_supported_models_param() -> None:
-    """Ensure SUPPORTED_MODELS exists in Settings (defaults only — not from .env)."""
+    """Seed SUPPORTED_MODELS from code defaults only when missing/empty."""
     description = (
         "JSON array of provider-prefixed LiteLLM model ids shown in agent/chat selects "
-        "(e.g. anthropic/..., gemini/...). Edit here — not in .env."
+        "(e.g. anthropic/..., gemini/...). Edit in Settings — not in .env."
     )
     row = SystemParam.query.filter_by(key="SUPPORTED_MODELS").first()
     if row and parse_supported_models(row.value):
         row.description = description
         return
-    imported = list(DEFAULT_SUPPORTED_MODELS)
-    value = format_supported_models(imported)
+    models = list(DEFAULT_SUPPORTED_MODELS)
+    value = format_supported_models(models)
     if row:
         row.value = value
         row.description = description
     else:
         db.session.add(SystemParam(key="SUPPORTED_MODELS", value=value, description=description))
-    logger.info("Seeded SUPPORTED_MODELS into Settings (%s models)", len(imported))
+    logger.info("Seeded SUPPORTED_MODELS into Settings (%s models)", len(models))
 
 
 def _pretty_print_json_params() -> None:

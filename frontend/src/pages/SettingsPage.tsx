@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AllowedEmail, api, SystemParam, userFacingApiError } from "@/api/client";
 import { useDesktopNotifications } from "@/hooks/useDesktopNotifications";
 import { ConfirmModal, NoticeModal } from "@/components/ui/modal";
 import { Button, Input, Label, Switch } from "@/components/ui/primitives";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const JSON_PARAM_KEYS = new Set(["MODEL_PRICING", "SUPPORTED_MODELS"]);
+const MODEL_PARAM_KEYS = new Set(["MODEL_PRICING", "SUPPORTED_MODELS"]);
+
+type ModelRow = {
+  id: string;
+  inputPerMillion: string;
+  outputPerMillion: string;
+};
+
+type PricingMap = Record<string, { input_per_million?: number; output_per_million?: number }>;
 
 function formatParamValue(key: string, value: string): string {
-  if (!JSON_PARAM_KEYS.has(key)) {
+  if (!MODEL_PARAM_KEYS.has(key)) {
     return value;
   }
   const trimmed = value.trim();
@@ -31,6 +39,121 @@ function withFormattedParamValues(rows: SystemParam[]): SystemParam[] {
     ...param,
     value: formatParamValue(param.key, param.value),
   }));
+}
+
+function parseSupportedModels(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean);
+    }
+  } catch {
+    // fall through to CSV
+  }
+  return trimmed
+    .split(/[\n,]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function parsePricing(raw: string): PricingMap {
+  try {
+    const parsed = JSON.parse(raw || "{}") as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as PricingMap;
+    }
+  } catch {
+    // empty
+  }
+  return {};
+}
+
+function modelRowsFromParams(params: SystemParam[]): ModelRow[] {
+  const supported = params.find((p) => p.key === "SUPPORTED_MODELS");
+  const pricingParam = params.find((p) => p.key === "MODEL_PRICING");
+  const models = parseSupportedModels(supported?.value || "");
+  const pricing = parsePricing(pricingParam?.value || "");
+  const ids = [...models];
+  for (const key of Object.keys(pricing).sort()) {
+    if (!ids.includes(key)) {
+      ids.push(key);
+    }
+  }
+  return ids.map((id) => {
+    const entry = pricing[id] || {};
+    return {
+      id,
+      inputPerMillion:
+        entry.input_per_million === undefined || entry.input_per_million === null
+          ? ""
+          : String(entry.input_per_million),
+      outputPerMillion:
+        entry.output_per_million === undefined || entry.output_per_million === null
+          ? ""
+          : String(entry.output_per_million),
+    };
+  });
+}
+
+function applyModelRowsToParams(params: SystemParam[], rows: ModelRow[]): SystemParam[] {
+  const models = rows.map((row) => row.id.trim()).filter(Boolean);
+  const uniqueModels: string[] = [];
+  for (const model of models) {
+    if (!uniqueModels.includes(model)) {
+      uniqueModels.push(model);
+    }
+  }
+  const pricing: PricingMap = {};
+  for (const row of rows) {
+    const id = row.id.trim();
+    if (!id) {
+      continue;
+    }
+    const input = Number(row.inputPerMillion);
+    const output = Number(row.outputPerMillion);
+    pricing[id] = {
+      input_per_million: Number.isFinite(input) ? input : 0,
+      output_per_million: Number.isFinite(output) ? output : 0,
+    };
+  }
+  const supportedValue = JSON.stringify(uniqueModels, null, 2);
+  const pricingValue = JSON.stringify(pricing, null, 2);
+  let next = params.map((param) => {
+    if (param.key === "SUPPORTED_MODELS") {
+      return { ...param, value: supportedValue };
+    }
+    if (param.key === "MODEL_PRICING") {
+      return { ...param, value: pricingValue };
+    }
+    return param;
+  });
+  if (!next.some((p) => p.key === "SUPPORTED_MODELS")) {
+    next = [
+      ...next,
+      {
+        id: 0,
+        key: "SUPPORTED_MODELS",
+        value: supportedValue,
+        description: "Provider-prefixed LiteLLM model ids shown in agent/chat selects.",
+      },
+    ];
+  }
+  if (!next.some((p) => p.key === "MODEL_PRICING")) {
+    next = [
+      ...next,
+      {
+        id: 0,
+        key: "MODEL_PRICING",
+        value: pricingValue,
+        description: "USD per 1M tokens by provider-prefixed model id.",
+      },
+    ];
+  }
+  return next;
 }
 
 function desktopNotificationStatusText(args: {
@@ -57,6 +180,7 @@ function desktopNotificationStatusText(args: {
 export default function SettingsPage() {
   const notifications = useDesktopNotifications();
   const [params, setParams] = useState<SystemParam[]>([]);
+  const [modelRows, setModelRows] = useState<ModelRow[]>([]);
   const [allowedEmails, setAllowedEmails] = useState<AllowedEmail[]>([]);
   const [newAllowedEmail, setNewAllowedEmail] = useState("");
   const [loading, setLoading] = useState(true);
@@ -74,7 +198,9 @@ export default function SettingsPage() {
       api.get<SystemParam[]>("/system-params"),
       api.get<AllowedEmail[]>("/allowed-emails"),
     ]);
-    setParams(withFormattedParamValues(paramsRes.data));
+    const formatted = withFormattedParamValues(paramsRes.data);
+    setParams(formatted);
+    setModelRows(modelRowsFromParams(formatted));
     setAllowedEmails(emailsRes.data);
     setLoading(false);
   }, []);
@@ -88,17 +214,25 @@ export default function SettingsPage() {
     setSaved(false);
   };
 
+  const updateModelRow = (index: number, patch: Partial<ModelRow>) => {
+    setModelRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    setSaved(false);
+  };
+
+  const otherParams = useMemo(
+    () => params.filter((param) => !MODEL_PARAM_KEYS.has(param.key)),
+    [params],
+  );
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Settings</h1>
       <p className="text-sm text-slate-600">
         System parameters stored in the database (<code>system_params</code>). Put LLM provider API keys here —
         <code> GEMINI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>,{" "}
-        <code>DASHSCOPE_API_KEY</code>, or any other <code>*_API_KEY</code>. Edit{" "}
-        <code>SUPPORTED_MODELS</code> (JSON array) to control which models appear in selects. Keys and the model
-        allowlist are not read from <code>.env</code>. Allowed emails are stored separately; only those addresses can
-        sign in. Admin login is not restricted. Timeout grace values control soft cancel and hard stop after an
-        agent&apos;s configured run timeout.
+        <code>DASHSCOPE_API_KEY</code>, or any other <code>*_API_KEY</code>. Use the Models table to choose which
+        models appear in selects and set USD cost per 1M tokens. Allowed emails are stored separately; only those
+        addresses can sign in. Admin login is not restricted.
       </p>
 
       <div className="rounded-lg border bg-white p-4">
@@ -209,9 +343,87 @@ export default function SettingsPage() {
         <p>Loading...</p>
       ) : (
         <div className="space-y-4">
-          {params.map((param) => {
+          <div className="rounded-lg border bg-white p-4">
+            <Label>Models and pricing</Label>
+            <p className="mt-1 text-sm text-slate-600">
+              Provider-prefixed LiteLLM ids (e.g. <code>gemini/gemini-3.8-flash</code>). Costs are USD per 1M tokens
+              for run estimates. Adding a row updates both the model allowlist and pricing.
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b text-left text-slate-600">
+                    <th className="px-2 py-2 font-medium">Model id</th>
+                    <th className="px-2 py-2 font-medium">Input $/1M</th>
+                    <th className="px-2 py-2 font-medium">Output $/1M</th>
+                    <th className="px-2 py-2 font-medium" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {modelRows.map((row, index) => (
+                    <tr key={`model-${index}`} className="border-b align-top">
+                      <td className="px-2 py-2">
+                        <Input
+                          className="min-w-[16rem] font-mono text-sm"
+                          value={row.id}
+                          placeholder="provider/model-id"
+                          onChange={(e) => updateModelRow(index, { id: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input
+                          className="w-28 font-mono text-sm"
+                          inputMode="decimal"
+                          value={row.inputPerMillion}
+                          placeholder="0"
+                          onChange={(e) => updateModelRow(index, { inputPerMillion: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input
+                          className="w-28 font-mono text-sm"
+                          inputMode="decimal"
+                          value={row.outputPerMillion}
+                          placeholder="0"
+                          onChange={(e) => updateModelRow(index, { outputPerMillion: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => {
+                            setModelRows((prev) => prev.filter((_, i) => i !== index));
+                            setSaved(false);
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setModelRows((prev) => [
+                    ...prev,
+                    { id: "", inputPerMillion: "", outputPerMillion: "" },
+                  ]);
+                  setSaved(false);
+                }}
+              >
+                Add model
+              </Button>
+            </div>
+          </div>
+
+          {otherParams.map((param) => {
             const isApiKey = param.key.endsWith("_API_KEY");
-            const isJson = JSON_PARAM_KEYS.has(param.key);
             return (
               <div key={param.key} className="rounded-lg border bg-white p-4">
                 <Label htmlFor={param.key}>{param.key}</Label>
@@ -229,19 +441,9 @@ export default function SettingsPage() {
                   <textarea
                     id={param.key}
                     spellCheck={false}
-                    className={
-                      isJson
-                        ? "mt-2 min-h-[18rem] w-full whitespace-pre rounded-md border border-slate-300 px-3 py-2 font-mono text-sm leading-5"
-                        : "mt-2 min-h-[5rem] w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
-                    }
+                    className="mt-2 min-h-[5rem] w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
                     value={param.value}
                     onChange={(e) => updateValue(param.key, e.target.value)}
-                    onBlur={() => {
-                      if (!isJson) {
-                        return;
-                      }
-                      updateValue(param.key, formatParamValue(param.key, param.value));
-                    }}
                   />
                 )}
               </div>
@@ -258,14 +460,27 @@ export default function SettingsPage() {
               setError(null);
               setSaved(false);
               try {
+                const blank = modelRows.some((row) => !row.id.trim());
+                if (blank) {
+                  throw Object.assign(new Error("Every model row needs a model id"), { isAxiosError: false });
+                }
+                if (modelRows.every((row) => !row.id.trim())) {
+                  throw Object.assign(new Error("Add at least one model"), { isAxiosError: false });
+                }
+                const merged = applyModelRowsToParams(params, modelRows);
                 const res = await api.put<SystemParam[]>("/system-params", {
-                  items: params.map(({ key, value, description }) => ({ key, value, description })),
+                  items: merged.map(({ key, value, description }) => ({ key, value, description })),
                 });
-                setParams(withFormattedParamValues(res.data));
+                const formatted = withFormattedParamValues(res.data);
+                setParams(formatted);
+                setModelRows(modelRowsFromParams(formatted));
                 setSaved(true);
                 setNotice({ title: "Settings saved", message: "System parameters were updated." });
               } catch (err) {
-                const message = userFacingApiError(err);
+                const message =
+                  err instanceof Error && !(err as { isAxiosError?: boolean }).isAxiosError && err.message
+                    ? err.message
+                    : userFacingApiError(err);
                 setError(message);
                 setNotice({ title: "Could not save settings", message });
               } finally {
