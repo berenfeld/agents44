@@ -182,7 +182,8 @@ RUN apt-get update \
     && useradd --system --gid psql --home-dir /var/lib/psql --create-home --shell /bin/bash psql \
     && mkdir -p /var/lib/psql/data /var/run/postgresql \
     && chown -R psql:psql /var/lib/psql /var/run/postgresql \
-    && chmod 775 /var/run/postgresql \
+    && chmod 775 /var/run/postgresql
+
 # Dependency artifacts (change only when lockfiles / requirements change)
 COPY --from=python-deps /opt/agents44/venv /opt/agents44/venv
 # Chromium for Python Playwright (PLAYWRIGHT_BROWSERS_PATH). Version-locked to
