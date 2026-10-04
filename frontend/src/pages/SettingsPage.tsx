@@ -5,6 +5,33 @@ import { ConfirmModal, NoticeModal } from "@/components/ui/modal";
 import { Button, Input, Label, Switch } from "@/components/ui/primitives";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const JSON_PARAM_KEYS = new Set(["MODEL_PRICING", "SUPPORTED_MODELS"]);
+
+function formatParamValue(key: string, value: string): string {
+  if (!JSON_PARAM_KEYS.has(key)) {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed !== null && typeof parsed === "object") {
+      return JSON.stringify(parsed, null, 2);
+    }
+  } catch {
+    // Keep the raw value so the operator can fix invalid JSON.
+  }
+  return value;
+}
+
+function withFormattedParamValues(rows: SystemParam[]): SystemParam[] {
+  return rows.map((param) => ({
+    ...param,
+    value: formatParamValue(param.key, param.value),
+  }));
+}
 
 function desktopNotificationStatusText(args: {
   supported: boolean;
@@ -47,7 +74,7 @@ export default function SettingsPage() {
       api.get<SystemParam[]>("/system-params"),
       api.get<AllowedEmail[]>("/allowed-emails"),
     ]);
-    setParams(paramsRes.data);
+    setParams(withFormattedParamValues(paramsRes.data));
     setAllowedEmails(emailsRes.data);
     setLoading(false);
   }, []);
@@ -67,10 +94,11 @@ export default function SettingsPage() {
       <p className="text-sm text-slate-600">
         System parameters stored in the database (<code>system_params</code>). Put LLM provider API keys here —
         <code> GEMINI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>,{" "}
-        <code>DASHSCOPE_API_KEY</code>, or any other <code>*_API_KEY</code>. They are not read from{" "}
-        <code>.env</code>. Allowed emails are stored separately; only those addresses can sign in. Admin login is not
-        restricted. Timeout grace values control soft cancel and hard stop after an agent&apos;s configured run
-        timeout.
+        <code>DASHSCOPE_API_KEY</code>, or any other <code>*_API_KEY</code>. Edit{" "}
+        <code>SUPPORTED_MODELS</code> (JSON array) to control which models appear in selects. Keys and the model
+        allowlist are not read from <code>.env</code>. Allowed emails are stored separately; only those addresses can
+        sign in. Admin login is not restricted. Timeout grace values control soft cancel and hard stop after an
+        agent&apos;s configured run timeout.
       </p>
 
       <div className="rounded-lg border bg-white p-4">
@@ -183,6 +211,7 @@ export default function SettingsPage() {
         <div className="space-y-4">
           {params.map((param) => {
             const isApiKey = param.key.endsWith("_API_KEY");
+            const isJson = JSON_PARAM_KEYS.has(param.key);
             return (
               <div key={param.key} className="rounded-lg border bg-white p-4">
                 <Label htmlFor={param.key}>{param.key}</Label>
@@ -199,9 +228,20 @@ export default function SettingsPage() {
                 ) : (
                   <textarea
                     id={param.key}
-                    className="mt-2 min-h-[5rem] w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
+                    spellCheck={false}
+                    className={
+                      isJson
+                        ? "mt-2 min-h-[18rem] w-full whitespace-pre rounded-md border border-slate-300 px-3 py-2 font-mono text-sm leading-5"
+                        : "mt-2 min-h-[5rem] w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm"
+                    }
                     value={param.value}
                     onChange={(e) => updateValue(param.key, e.target.value)}
+                    onBlur={() => {
+                      if (!isJson) {
+                        return;
+                      }
+                      updateValue(param.key, formatParamValue(param.key, param.value));
+                    }}
                   />
                 )}
               </div>
@@ -221,7 +261,7 @@ export default function SettingsPage() {
                 const res = await api.put<SystemParam[]>("/system-params", {
                   items: params.map(({ key, value, description }) => ({ key, value, description })),
                 });
-                setParams(res.data);
+                setParams(withFormattedParamValues(res.data));
                 setSaved(true);
                 setNotice({ title: "Settings saved", message: "System parameters were updated." });
               } catch (err) {

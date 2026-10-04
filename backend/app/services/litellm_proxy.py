@@ -2,6 +2,9 @@
 
 Uses litellm.acompletion directly rather than the litellm CLI proxy, which currently
 hard-imports an experimental MCP server incompatible with mcp 2.x.
+
+Provider API keys and the model allowlist are read from Settings (`system_params`)
+on every request — not copied into process env.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ _proxy_thread: threading.Thread | None = None
 _proxy_started = False
 _proxy_lock = threading.Lock()
 _master_key: str = ""
-_allowed_models: set[str] = set()
+_flask_app: Flask | None = None
 
 
 def litellm_base_url(app: Flask | None = None) -> str:
@@ -56,16 +59,44 @@ def _chunk_to_dict(chunk: Any) -> dict[str, Any]:
     return dict(chunk)
 
 
+def _with_app_context(fn):
+    if _flask_app is None:
+        raise RuntimeError("LiteLLM gateway has no Flask app")
+    with _flask_app.app_context():
+        return fn()
+
+
+def _allowed_model_ids() -> set[str]:
+    from app.services.model_registry import normalize_model_id
+    from app.services.params import get_supported_models_param
+
+    def _load() -> set[str]:
+        return {normalize_model_id(m) for m in get_supported_models_param() if m}
+
+    return _with_app_context(_load)
+
+
+def _api_key_for_model(model: str) -> tuple[str, str]:
+    """Return (settings_key_name, api_key_value) from system_params for this model."""
+    from app.services.params import provider_api_key_for_model, provider_key_name_for_model
+
+    def _load() -> tuple[str, str]:
+        return provider_key_name_for_model(model), provider_api_key_for_model(model)
+
+    return _with_app_context(_load)
+
+
 async def _health(_request: Request) -> Response:
     return JSONResponse({"status": "alive"})
 
 
-def _completion_kwargs(body: dict[str, Any], *, stream: bool) -> dict[str, Any]:
+def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": str(body.get("model") or "").strip(),
         "messages": body.get("messages"),
         "stream": stream,
         "drop_params": True,
+        "api_key": api_key,
     }
     for key in (
         "temperature",
@@ -87,8 +118,8 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool) -> dict[str, Any]:
     return kwargs
 
 
-async def _stream_sse(body: dict[str, Any]) -> AsyncIterator[bytes]:
-    kwargs = _completion_kwargs(body, stream=True)
+async def _stream_sse(body: dict[str, Any], *, api_key: str) -> AsyncIterator[bytes]:
+    kwargs = _completion_kwargs(body, stream=True, api_key=api_key)
     stream = await litellm.acompletion(**kwargs)
     try:
         async for chunk in stream:
@@ -113,9 +144,24 @@ async def _chat_completions(request: Request) -> Response:
     model = str(body.get("model") or "").strip()
     if not model:
         return JSONResponse({"error": {"message": "model is required", "type": "invalid_request"}}, status_code=400)
-    if _allowed_models and model not in _allowed_models:
+
+    allowed = _allowed_model_ids()
+    if allowed and model not in allowed:
         return JSONResponse(
             {"error": {"message": f"Model not allowed: {model}", "type": "invalid_request"}},
+            status_code=400,
+        )
+
+    key_name, api_key = _api_key_for_model(model)
+    if not api_key:
+        label = key_name or "provider API key"
+        return JSONResponse(
+            {
+                "error": {
+                    "message": f"{label} is missing in Settings for model {model}",
+                    "type": "auth_error",
+                }
+            },
             status_code=400,
         )
 
@@ -126,12 +172,12 @@ async def _chat_completions(request: Request) -> Response:
     stream = bool(body.get("stream") or False)
     if stream:
         return StreamingResponse(
-            _stream_sse(body),
+            _stream_sse(body, api_key=api_key),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    kwargs = _completion_kwargs(body, stream=False)
+    kwargs = _completion_kwargs(body, stream=False, api_key=api_key)
     try:
         result = await litellm.acompletion(**kwargs)
     except Exception as exc:  # noqa: BLE001
@@ -171,12 +217,10 @@ def wait_for_litellm(app: Flask, *, timeout_seconds: float = 30.0) -> None:
 
 
 def start_litellm_proxy(app: Flask) -> None:
-    """Start the localhost LiteLLM gateway. Provider keys come from Settings."""
-    global _proxy_thread, _proxy_started, _master_key, _allowed_models
-    from app.services.params import apply_provider_keys_to_process_env
+    """Start the localhost LiteLLM gateway. Provider keys are read from Settings (DB)."""
+    global _proxy_thread, _proxy_started, _master_key, _flask_app
 
-    with app.app_context():
-        apply_provider_keys_to_process_env()
+    _flask_app = app
 
     with _proxy_lock:
         if _proxy_started and _proxy_thread is not None and _proxy_thread.is_alive():
@@ -184,7 +228,6 @@ def start_litellm_proxy(app: Flask) -> None:
             return
 
         _master_key = str(app.config["LITELLM_MASTER_KEY"])
-        _allowed_models = set(app.config.get("SUPPORTED_MODELS_CONFIG") or [])
         port = int(app.config["LITELLM_PROXY_PORT"])
         starlette_app = _build_app()
 
@@ -215,21 +258,6 @@ def start_litellm_proxy(app: Flask) -> None:
 
     wait_for_litellm(app)
     logger.info("LiteLLM gateway is ready on %s", litellm_base_url(app))
-
-
-def refresh_provider_keys(app: Flask | None = None) -> None:
-    """Reload Settings API keys into process env (call after Settings save)."""
-    from app.services.params import apply_provider_keys_to_process_env
-
-    if app is not None:
-        with app.app_context():
-            keys = apply_provider_keys_to_process_env()
-    else:
-        keys = apply_provider_keys_to_process_env()
-    logger.info(
-        "LiteLLM provider keys refreshed from Settings (%s configured)",
-        ", ".join(sorted(k for k, v in keys.items() if v)) or "none",
-    )
 
 
 def any_provider_key_configured(app: Flask | None = None) -> bool:

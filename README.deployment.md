@@ -86,7 +86,7 @@ After the pipeline has pushed to ECR, the simplest managed option is **AWS App R
 2. Source: **Container registry** → **Amazon ECR** → pick `agents44:latest` (or a version tag)
 3. Deployment: Automatic (redeploy when `latest` changes) or Manual
 4. Port: **80**
-5. Environment / secrets: put the same keys as `.env` (at least one LLM provider key such as `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, plus `FLASK_SECRET_KEY`, `PSQL_*`, `FRONTEND_URL`, Google/SMTP as needed). App Runner injects env vars; you can also mount a secret later via Secrets Manager.
+5. Environment / secrets: put the same keys as `.env` (`FLASK_SECRET_KEY`, `PSQL_*`, `FRONTEND_URL`, Google/SMTP as needed). LLM provider API keys go in **Settings** (`system_params`) after the app is up — not in App Runner env.
 6. Create → wait for the service URL
 
 **Caveats for this all-in-one image on App Runner / Fargate:**

@@ -1,46 +1,45 @@
 import json
 import logging
-import os
 
 from app.extensions import db
 from app.models import SystemParam
 
 logger = logging.getLogger(__name__)
 
-# LLM provider secrets live in Settings (system_params), not .env.
+# LLM provider secrets live only in Settings (system_params). Never .env / process env.
 LLM_API_KEY_PARAMS = (
     {
         "key": "ANTHROPIC_API_KEY",
         "value": "",
-        "description": "Anthropic API key for Claude models (anthropic/...). Stored in Settings, not .env.",
-        "env_aliases": ("ANTHROPIC_API_KEY",),
-        "os_env": ("ANTHROPIC_API_KEY",),
+        "description": "Anthropic API key for Claude models (anthropic/...). Settings only — not .env.",
     },
     {
         "key": "GEMINI_API_KEY",
         "value": "",
         "description": (
-            "Google Gemini API key (gemini/...). Also accepts the common typo GEMIN_API_KEY as an alias. "
-            "Stored in Settings, not .env."
+            "Google Gemini API key (gemini/...). Settings only — not .env. "
+            "Also accepts the legacy typo key GEMIN_API_KEY if present in Settings."
         ),
-        "env_aliases": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMIN_API_KEY"),
-        "os_env": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     },
     {
         "key": "OPENAI_API_KEY",
         "value": "",
-        "description": "OpenAI API key for openai/... models. Stored in Settings, not .env.",
-        "env_aliases": ("OPENAI_API_KEY",),
-        "os_env": ("OPENAI_API_KEY",),
+        "description": "OpenAI API key for openai/... models. Settings only — not .env.",
     },
     {
         "key": "DASHSCOPE_API_KEY",
         "value": "",
-        "description": "Alibaba DashScope API key for Qwen (dashscope/...). Stored in Settings, not .env.",
-        "env_aliases": ("DASHSCOPE_API_KEY",),
-        "os_env": ("DASHSCOPE_API_KEY",),
+        "description": "Alibaba DashScope API key for Qwen (dashscope/...). Settings only — not .env.",
     },
 )
+
+# Default allowlist shown in Settings / agent model selects (provider-prefixed LiteLLM ids).
+DEFAULT_SUPPORTED_MODELS = [
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5-20251001",
+    "gemini/gemini-2.5-flash",
+    "gemini/gemini-2.5-pro",
+]
 
 DEFAULT_MODEL_PRICING = {
     "anthropic/claude-fable-5": {
@@ -101,7 +100,7 @@ SEED_PARAMS = [
     },
     {
         "key": "MODEL_PRICING",
-        "value": json.dumps(DEFAULT_MODEL_PRICING),
+        "value": json.dumps(DEFAULT_MODEL_PRICING, indent=2, sort_keys=True),
         "description": "USD per 1M tokens by provider-prefixed model id (e.g. anthropic/..., gemini/...)",
     },
     *[
@@ -153,14 +152,100 @@ def get_param(key: str, default=None):
     return row.value
 
 
+def pretty_json_value(raw: str, *, sort_keys: bool = False) -> str | None:
+    """Return indented JSON if `raw` is a JSON object/array; otherwise None."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, (dict, list)):
+        return None
+    return json.dumps(parsed, indent=2, sort_keys=sort_keys and isinstance(parsed, dict))
+
+
+def parse_supported_models(raw: str | None) -> list[str]:
+    """Parse SUPPORTED_MODELS from JSON array or comma/newline-separated text."""
+    if raw is None:
+        return []
+    text = str(raw).strip()
+    if not text:
+        return []
+    models: list[str] = []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        candidates = parsed
+    elif isinstance(parsed, str):
+        candidates = [parsed]
+    else:
+        candidates = text.replace("\n", ",").split(",")
+    for part in candidates:
+        model = str(part).strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+def format_supported_models(models: list[str]) -> str:
+    return json.dumps(models, indent=2)
+
+
+def get_supported_models_param() -> list[str]:
+    """SUPPORTED_MODELS from Settings (system_params), not .env."""
+    return parse_supported_models(get_param("SUPPORTED_MODELS", ""))
+
+
+def normalize_secret_value(raw: str | None) -> str:
+    """Strip whitespace and a single layer of matching quotes from a secret."""
+    value = (raw or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return value
+
+
 def get_llm_api_key(key: str) -> str:
-    """Return a provider API key from Settings. Accepts GEMIN_API_KEY as Gemini alias."""
-    value = (get_param(key) or "").strip()
+    """Return a provider API key from Settings (DB). Accepts GEMIN_API_KEY as Gemini alias."""
+    value = normalize_secret_value(get_param(key))
     if value:
         return value
     if key == "GEMINI_API_KEY":
-        return (get_param("GEMIN_API_KEY") or "").strip()
+        return normalize_secret_value(get_param("GEMIN_API_KEY"))
     return ""
+
+
+_PROVIDER_KEY_BY_PREFIX = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+}
+
+
+def provider_api_key_for_model(model: str) -> str:
+    """Resolve the Settings API key for a provider-prefixed model id (reads DB)."""
+    value = (model or "").strip()
+    if "/" not in value:
+        return ""
+    prefix = value.split("/", 1)[0].strip().lower()
+    key_name = _PROVIDER_KEY_BY_PREFIX.get(prefix) or f"{prefix.upper()}_API_KEY"
+    return get_llm_api_key(key_name)
+
+
+def provider_key_name_for_model(model: str) -> str:
+    """Settings key name expected for a provider-prefixed model id."""
+    value = (model or "").strip()
+    if "/" not in value:
+        return ""
+    prefix = value.split("/", 1)[0].strip().lower()
+    return _PROVIDER_KEY_BY_PREFIX.get(prefix) or f"{prefix.upper()}_API_KEY"
 
 
 def _api_key_param_rows() -> list[SystemParam]:
@@ -178,7 +263,7 @@ def get_provider_api_keys() -> dict[str, str]:
         name = (row.key or "").strip()
         if not name or name == "GEMIN_API_KEY":
             continue
-        value = (row.value or "").strip()
+        value = normalize_secret_value(row.value)
         if value:
             keys[name] = value
     gemini = get_llm_api_key("GEMINI_API_KEY")
@@ -191,55 +276,35 @@ def any_provider_api_key_configured() -> bool:
     return bool(get_provider_api_keys())
 
 
-def apply_provider_keys_to_process_env() -> dict[str, str]:
-    """Push every Settings `*_API_KEY` into process env for LiteLLM."""
-    known = {item["key"] for item in LLM_API_KEY_PARAMS}
-    for row in _api_key_param_rows():
-        known.add(row.key)
-    known.update({"GOOGLE_API_KEY", "GEMIN_API_KEY"})
-
-    keys = get_provider_api_keys()
-    for name in known:
-        if name == "GEMIN_API_KEY":
-            os.environ.pop(name, None)
-            continue
-        value = keys.get(name, "").strip()
-        if value:
-            os.environ[name] = value
-        else:
-            os.environ.pop(name, None)
-
-    gemini = keys.get("GEMINI_API_KEY", "").strip()
-    if gemini:
-        os.environ["GEMINI_API_KEY"] = gemini
-        os.environ["GOOGLE_API_KEY"] = gemini
+def _ensure_supported_models_param() -> None:
+    """Ensure SUPPORTED_MODELS exists in Settings (defaults only — not from .env)."""
+    description = (
+        "JSON array of provider-prefixed LiteLLM model ids shown in agent/chat selects "
+        "(e.g. anthropic/..., gemini/...). Edit here — not in .env."
+    )
+    row = SystemParam.query.filter_by(key="SUPPORTED_MODELS").first()
+    if row and parse_supported_models(row.value):
+        row.description = description
+        return
+    imported = list(DEFAULT_SUPPORTED_MODELS)
+    value = format_supported_models(imported)
+    if row:
+        row.value = value
+        row.description = description
     else:
-        os.environ.pop("GEMINI_API_KEY", None)
-        os.environ.pop("GOOGLE_API_KEY", None)
-    return keys
+        db.session.add(SystemParam(key="SUPPORTED_MODELS", value=value, description=description))
+    logger.info("Seeded SUPPORTED_MODELS into Settings (%s models)", len(imported))
 
 
-def _import_llm_keys_from_env_once() -> None:
-    """One-time migrate provider keys from process/.env into Settings if Settings empty."""
-    for item in LLM_API_KEY_PARAMS:
-        row = SystemParam.query.filter_by(key=item["key"]).first()
-        current = (row.value if row else "") or ""
-        if current.strip():
+def _pretty_print_json_params() -> None:
+    """Keep JSON system params indented so Settings is readable."""
+    for key, sort_keys in (("MODEL_PRICING", True), ("SUPPORTED_MODELS", False)):
+        row = SystemParam.query.filter_by(key=key).first()
+        if not row or not (row.value or "").strip():
             continue
-        imported = ""
-        for alias in item["env_aliases"]:
-            imported = (os.getenv(alias) or "").strip()
-            if imported:
-                break
-        if not imported:
-            continue
-        if row:
-            row.value = imported
-        else:
-            db.session.add(
-                SystemParam(key=item["key"], value=imported, description=item["description"])
-            )
-        logger.info("Imported %s from environment into Settings (one-time)", item["key"])
+        pretty = pretty_json_value(row.value, sort_keys=sort_keys)
+        if pretty is not None and pretty != row.value:
+            row.value = pretty
 
 
 def get_param_int(key: str, default: int) -> int:
@@ -312,7 +377,7 @@ def _merge_model_pricing_prefixes() -> None:
             pricing[key] = value
             changed = True
     if changed:
-        row.value = json.dumps(pricing)
+        row.value = json.dumps(pricing, indent=2, sort_keys=True)
         row.description = (
             "USD per 1M tokens by provider-prefixed model id (e.g. anthropic/..., gemini/...)"
         )
@@ -335,7 +400,7 @@ def seed_system_params() -> None:
         db.session.delete(typo)
     elif typo:
         db.session.delete(typo)
-    _import_llm_keys_from_env_once()
+    _ensure_supported_models_param()
     _merge_model_pricing_prefixes()
+    _pretty_print_json_params()
     db.session.commit()
-    apply_provider_keys_to_process_env()

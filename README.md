@@ -18,7 +18,7 @@ All configuration and secrets live in **one** dotenv file:
 |-------------|------|
 | Local / Docker | `./.env` mounted at `/opt/agents44/.env` |
 
-Copy `.env.example` to `./.env` and set values. LLM provider API keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are stored in **Settings** (`system_params`), not in `.env`. Models are selected from the `SUPPORTED_MODELS` allowlist (provider-prefixed LiteLLM ids). Do not add `backend/.env`, `frontend/.env`, or `.env.local` files.
+Copy `.env.example` to `./.env` and set values. LLM provider API keys and the `SUPPORTED_MODELS` allowlist are stored in **Settings** (`system_params`), not in `.env`. Do not add `backend/.env`, `frontend/.env`, or `.env.local` files.
 
 ## Run (local = same image as AWS)
 
@@ -118,6 +118,7 @@ All mutating API calls use `Content-Type: application/json`.
 ## system_params keys (CAPITAL_LETTERS)
 
 - `NOTIFY_ON` — `all` | `failures` | `none`
+- `SUPPORTED_MODELS` — JSON array of provider-prefixed LiteLLM model ids shown in agent/chat selects
 - `MODEL_PRICING` — per-model USD per 1M tokens for cost estimates (provider-prefixed ids)
 - `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` — LLM provider keys (any `*_API_KEY` works)
 - `TIMEOUT_SIGTERM_GRACE_SECONDS` — seconds after timeout before soft cancel (default 300)

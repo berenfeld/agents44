@@ -148,6 +148,7 @@ def create_app() -> Flask:
         seed_system_params()
         ensure_workspace_layout()
         init_model_registry(app)
+        db.session.commit()
         if _should_start_background_services(app):
             if not app.config.get("SCHEDULER_STARTED"):
                 init_scheduler(app)
@@ -163,7 +164,7 @@ def create_app() -> Flask:
                 start_litellm_proxy(app)
                 if not any_provider_api_key_configured():
                     logger.warning(
-                        "No LLM provider API key in Settings yet "
+                        "No LLM provider API key in system_params yet "
                         "(ANTHROPIC_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY). "
                         "Add keys under Settings — agent runs will fail until then."
                     )

@@ -7,7 +7,7 @@ from flask import current_app
 from app.errors import ModelDiscoveryError
 from app.extensions import db
 from app.models import SystemAgent
-from app.services.params import get_param_json
+from app.services.params import get_param_json, get_supported_models_param
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +27,17 @@ def normalize_model_id(model: str) -> str:
 
 
 def configured_models(app=None) -> list[str]:
-    cfg = app.config if app is not None else current_app.config
-    models = list(cfg.get("SUPPORTED_MODELS_CONFIG") or [])
+    """Read SUPPORTED_MODELS from Settings (system_params)."""
+    _ = app  # app context required by get_param; kept for call-site compatibility
+    models = [normalize_model_id(m) for m in get_supported_models_param()]
     if not models:
         raise ModelDiscoveryError("SUPPORTED_MODELS is empty")
-    return [normalize_model_id(m) for m in models]
+    # Preserve order, drop duplicates after normalize.
+    unique: list[str] = []
+    for model in models:
+        if model and model not in unique:
+            unique.append(model)
+    return unique
 
 
 def resolve_default_model(models: list[str], app=None) -> str:
@@ -70,15 +76,13 @@ def init_model_registry(app) -> None:
                 logger.warning(
                     "Agent %s model %s unsupported; changed to %s", agent.name, old, default_model
                 )
-        db.session.commit()
+        db.session.flush()
         logger.info("Supported models: %s (default=%s)", models, default_model)
 
 
 def get_supported_models() -> list[str]:
-    models = current_app.config.get("SUPPORTED_MODELS")
-    if models is None:
-        raise RuntimeError("Supported models are not initialized")
-    return list(models)
+    """Always read the allowlist from Settings (DB), not a process cache."""
+    return configured_models()
 
 
 def get_default_model() -> str:
