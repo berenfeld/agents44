@@ -8,7 +8,7 @@ from flask import g, request, session
 logger = logging.getLogger("api")
 
 FIELD_MAX = 200
-MAX_LOG_BYTES = 8192
+BODY_LOG_MAX = 256
 SENSITIVE_KEY_MARKERS = (
     "password",
     "passwd",
@@ -26,7 +26,7 @@ def _is_sensitive_key(key: str) -> bool:
     return any(marker in lowered for marker in SENSITIVE_KEY_MARKERS)
 
 
-def truncate_json(obj, field_max: int = FIELD_MAX, max_bytes: int = MAX_LOG_BYTES):
+def truncate_json(obj, field_max: int = FIELD_MAX):
     def _truncate_value(value, key: str | None = None):
         if key and _is_sensitive_key(key):
             return "[redacted]"
@@ -38,11 +38,17 @@ def truncate_json(obj, field_max: int = FIELD_MAX, max_bytes: int = MAX_LOG_BYTE
             return f"{value[:field_max]}...[truncated {len(value) - field_max} chars]"
         return value
 
-    truncated = _truncate_value(obj)
-    serialized = json.dumps(truncated, default=str)
-    if len(serialized) <= max_bytes:
-        return truncated
-    return truncated
+    return _truncate_value(obj)
+
+
+def _body_for_log(body) -> str | None:
+    """Serialize request/response body for logs, capped at BODY_LOG_MAX chars."""
+    if body is None:
+        return None
+    serialized = json.dumps(truncate_json(body), default=str)
+    if len(serialized) <= BODY_LOG_MAX:
+        return serialized
+    return f"{serialized[:BODY_LOG_MAX]}...[truncated {len(serialized) - BODY_LOG_MAX} chars]"
 
 
 def _current_user() -> str:
@@ -55,9 +61,12 @@ def log_api_request():
         body = request.get_json(silent=True)
     elif request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         body = {}
-    payload = truncate_json(
-        {"method": request.method, "path": request.path, "user": _current_user(), "body": body}
-    )
+    payload = {
+        "method": request.method,
+        "path": request.path,
+        "user": _current_user(),
+        "body": _body_for_log(body),
+    }
     logger.info("REQ %s", json.dumps(payload, default=str))
     g._req_start = time.time()
 
@@ -67,20 +76,16 @@ def log_api_response(response):
     resp_body = None
     if response.is_json:
         resp_body = response.get_json(silent=True)
-    payload = truncate_json(
-        {
-            "method": request.method,
-            "path": request.path,
-            "user": _current_user(),
-            "status": response.status_code,
-            "duration_ms": duration_ms,
-            "body": resp_body,
-        }
-    )
+    payload = {
+        "method": request.method,
+        "path": request.path,
+        "user": _current_user(),
+        "status": response.status_code,
+        "duration_ms": duration_ms,
+        "body": _body_for_log(resp_body),
+    }
     serialized = json.dumps(payload, default=str)
-    if response.status_code >= 500:
-        logger.error("RES %s", serialized)
-    elif response.status_code >= 400:
+    if response.status_code >= 400:
         logger.error("RES %s", serialized)
     else:
         logger.info("RES %s", serialized)

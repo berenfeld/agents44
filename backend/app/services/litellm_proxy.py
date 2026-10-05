@@ -133,23 +133,30 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> d
     return kwargs
 
 
-async def _stream_sse(body: dict[str, Any], *, api_key: str) -> AsyncIterator[bytes]:
-    kwargs = _completion_kwargs(body, stream=True, api_key=api_key)
-    stream = await litellm.acompletion(**kwargs)
+def _upstream_error_message(exc: BaseException) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    # Keep docker/run logs readable; full traceback is still logged via logger.exception.
+    if len(message) > 800:
+        return f"{message[:800]}...[truncated]"
+    return message
+
+
+async def _stream_sse(stream: Any, *, model: str) -> AsyncIterator[bytes]:
     try:
         async for chunk in stream:
             payload = _chunk_to_dict(chunk)
             yield f"data: {json.dumps(payload)}\n\n".encode("utf-8")
         yield b"data: [DONE]\n\n"
     except Exception as exc:  # noqa: BLE001
-        logger.exception("LiteLLM stream failed for model=%s", kwargs.get("model"))
-        err = {"error": {"message": str(exc), "type": "upstream_error"}}
+        logger.exception("LiteLLM stream failed mid-flight for model=%s", model)
+        err = {"error": {"message": _upstream_error_message(exc), "type": "upstream_error"}}
         yield f"data: {json.dumps(err)}\n\n".encode("utf-8")
         yield b"data: [DONE]\n\n"
 
 
 async def _chat_completions(request: Request) -> Response:
     if not _authorized(request):
+        logger.warning("LiteLLM unauthorized request path=%s", request.url.path)
         return JSONResponse({"error": {"message": "Unauthorized", "type": "auth_error"}}, status_code=401)
     try:
         body: dict[str, Any] = await request.json()
@@ -162,6 +169,7 @@ async def _chat_completions(request: Request) -> Response:
 
     allowed = _allowed_model_ids()
     if allowed and model not in allowed:
+        logger.warning("LiteLLM rejected model not allowlisted: %s", model)
         return JSONResponse(
             {"error": {"message": f"Model not allowed: {model}", "type": "invalid_request"}},
             status_code=400,
@@ -170,6 +178,7 @@ async def _chat_completions(request: Request) -> Response:
     key_name, api_key = _api_key_for_model(model)
     if not api_key:
         label = key_name or "provider API key"
+        logger.error("LiteLLM missing Settings key %s for model=%s", label, model)
         return JSONResponse(
             {
                 "error": {
@@ -185,9 +194,30 @@ async def _chat_completions(request: Request) -> Response:
         return JSONResponse({"error": {"message": "messages must be a list", "type": "invalid_request"}}, status_code=400)
 
     stream = bool(body.get("stream") or False)
+    tool_count = len(body["tools"]) if isinstance(body.get("tools"), list) else 0
+    logger.info(
+        "LiteLLM %s model=%s messages=%s tools=%s key=%s",
+        "stream" if stream else "completion",
+        model,
+        len(messages),
+        tool_count,
+        key_name or "?",
+    )
+
     if stream:
+        # Open the upstream stream before returning StreamingResponse so auth/param
+        # failures become HTTP 502 JSON (not a dropped socket → opaque "Connection error.").
+        kwargs = _completion_kwargs(body, stream=True, api_key=api_key)
+        try:
+            upstream = await litellm.acompletion(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("LiteLLM stream open failed for model=%s", model)
+            return JSONResponse(
+                {"error": {"message": _upstream_error_message(exc), "type": "upstream_error"}},
+                status_code=502,
+            )
         return StreamingResponse(
-            _stream_sse(body, api_key=api_key),
+            _stream_sse(upstream, model=model),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
@@ -198,7 +228,7 @@ async def _chat_completions(request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001
         logger.exception("LiteLLM completion failed for model=%s", model)
         return JSONResponse(
-            {"error": {"message": str(exc), "type": "upstream_error"}},
+            {"error": {"message": _upstream_error_message(exc), "type": "upstream_error"}},
             status_code=502,
         )
     return JSONResponse(_chunk_to_dict(result))

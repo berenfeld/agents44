@@ -288,9 +288,16 @@ class AgentRuntime:
 
         mcp_toolset = MCPToolset(_mcp_sse_url(), headers=headers)
         # Ask models that support it (Gemini 3.x, etc.) to return thoughts so we can log Reasoning.
+        # GPT-6 Luna / GPT-6 Sol only allow Chat Completions function calling with
+        # reasoning_effort=none (default medium requires the Responses API).
         model_settings = None
-        if normalize_model_id(model_id).startswith(("gemini/", "google/")):
+        normalized_model = normalize_model_id(model_id)
+        if normalized_model.startswith(("gemini/", "google/")):
             model_settings = {"thinking": True}
+        elif normalized_model.startswith("openai/"):
+            openai_name = normalized_model.split("/", 1)[1]
+            if openai_name in {"gpt-6-luna", "gpt-6-sol"} or openai_name.endswith("-luna"):
+                model_settings = {"openai_reasoning_effort": "none"}
         agent = Agent(
             model,
             deps_type=RuntimeDeps,
