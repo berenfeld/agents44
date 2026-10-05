@@ -112,6 +112,10 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> d
         "presence_penalty",
         "frequency_penalty",
         "seed",
+        # Gemini / reasoning models: pydantic-ai sends these so thoughts are returned.
+        "reasoning_effort",
+        "thinking",
+        "extra_body",
     ):
         if key in body and body[key] is not None:
             kwargs[key] = body[key]

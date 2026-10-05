@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatRunLog } from "@/lib/format-run-log";
+import { filterLogBySection, formatRunLog } from "@/lib/format-run-log";
 import { highlightSearch } from "@/lib/search-highlight";
 
 function markupLineRe(): RegExp {
@@ -45,16 +45,21 @@ export function RunLogViewer({
   autoScroll = false,
   format = true,
   live = false,
+  sectionFilter = "all",
 }: {
   content: string;
   search?: string;
   autoScroll?: boolean;
   format?: boolean;
   live?: boolean;
+  sectionFilter?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [markupTimes, setMarkupTimes] = useState<string[]>([]);
-  const displayContent = useMemo(() => (format ? formatRunLog(content) : content), [content, format]);
+  const displayContent = useMemo(() => {
+    const formatted = format ? formatRunLog(content) : content;
+    return format ? filterLogBySection(formatted, sectionFilter) : formatted;
+  }, [content, format, sectionFilter]);
   const markupCount = format ? countMarkupLines(displayContent) : 0;
 
   let times = markupTimes;

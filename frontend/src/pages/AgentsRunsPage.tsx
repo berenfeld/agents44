@@ -10,7 +10,7 @@ import { SortableTh } from "@/components/ui/sortable-table";
 import { ViewRowMenu } from "@/components/ui/view-row-menu";
 import { cn, formatCost, formatDate, formatDuration, formatTokens, runDurationSeconds, runTokensTotal } from "@/lib/utils";
 import { countMatches } from "@/lib/search-highlight";
-import { formatRunLog } from "@/lib/format-run-log";
+import { filterLogBySection, formatRunLog, listLogSectionFilters } from "@/lib/format-run-log";
 import { ConfirmModal, Modal, NoticeModal } from "@/components/ui/modal";
 import { useTableSort, type SortDirection } from "@/hooks/useTableSort";
 import {
@@ -143,6 +143,7 @@ export default function AgentsRunsPage() {
   const [modalKind, setModalKind] = useState<"log" | "prompt" | "summary" | null>(null);
   const [modalRunId, setModalRunId] = useState<number | null>(null);
   const [modalSearch, setModalSearch] = useState("");
+  const [logSectionFilter, setLogSectionFilter] = useState("all");
   const [logAutoScroll, setLogAutoScroll] = useState(true);
   const [stopRun, setStopRun] = useState<AgentRun | null>(null);
   const [stoppingRunId, setStoppingRunId] = useState<number | null>(null);
@@ -214,9 +215,16 @@ export default function AgentsRunsPage() {
 
   const modalDisplayContent = useMemo(() => {
     if (modalKind === "log") {
-      return formatRunLog(modalContent);
+      return filterLogBySection(formatRunLog(modalContent), logSectionFilter);
     }
     return modalContent;
+  }, [modalContent, modalKind, logSectionFilter]);
+
+  const logSectionFilterOptions = useMemo(() => {
+    if (modalKind !== "log") {
+      return [];
+    }
+    return listLogSectionFilters(formatRunLog(modalContent));
   }, [modalContent, modalKind]);
 
   const modalMatchCount = useMemo(
@@ -315,6 +323,7 @@ export default function AgentsRunsPage() {
     setModalKind(kind);
     setModalRunId(runId);
     setModalSearch("");
+    setLogSectionFilter("all");
     setLogAutoScroll(true);
     setModalContent("Loading...");
     setModalOpen(true);
@@ -337,12 +346,22 @@ export default function AgentsRunsPage() {
     openModal(`Run #${run.id} summary`, "summary", run.id, () => fetchSummary(run.id));
   };
 
+  useEffect(() => {
+    if (logSectionFilter === "all") {
+      return;
+    }
+    if (!logSectionFilterOptions.some((option) => option.value === logSectionFilter)) {
+      setLogSectionFilter("all");
+    }
+  }, [logSectionFilter, logSectionFilterOptions]);
+
   const handleModalOpenChange = (open: boolean) => {
     setModalOpen(open);
     if (!open) {
       setModalKind(null);
       setModalRunId(null);
       setModalSearch("");
+      setLogSectionFilter("all");
     }
   };
 
@@ -657,6 +676,9 @@ export default function AgentsRunsPage() {
               liveLabel={modalKind === "summary" ? "Waiting" : "Live"}
               autoScroll={modalLogLive ? logAutoScroll : undefined}
               onAutoScrollChange={modalLogLive ? setLogAutoScroll : undefined}
+              sectionFilter={modalKind === "log" ? logSectionFilter : undefined}
+              sectionFilterOptions={modalKind === "log" ? logSectionFilterOptions : undefined}
+              onSectionFilterChange={modalKind === "log" ? setLogSectionFilter : undefined}
             />
           ) : null
         }
@@ -668,6 +690,7 @@ export default function AgentsRunsPage() {
             search={modalSearch}
             autoScroll={modalLogLive && logAutoScroll}
             live={modalLogLive}
+            sectionFilter={logSectionFilter}
           />
         ) : modalKind === "prompt" ? (
           <RunLogViewer content={modalContent} search={modalSearch} format={false} />

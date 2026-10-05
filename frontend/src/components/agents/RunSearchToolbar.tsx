@@ -1,5 +1,10 @@
 import { Input } from "@/components/ui/primitives";
 
+export type RunLogSectionFilterOption = {
+  value: string;
+  label: string;
+};
+
 export function RunSearchToolbar({
   search,
   onSearchChange,
@@ -9,6 +14,9 @@ export function RunSearchToolbar({
   liveLabel = "Live",
   autoScroll,
   onAutoScrollChange,
+  sectionFilter,
+  sectionFilterOptions,
+  onSectionFilterChange,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
@@ -18,9 +26,32 @@ export function RunSearchToolbar({
   liveLabel?: string;
   autoScroll?: boolean;
   onAutoScrollChange?: (enabled: boolean) => void;
+  sectionFilter?: string;
+  sectionFilterOptions?: RunLogSectionFilterOption[];
+  onSectionFilterChange?: (value: string) => void;
 }) {
+  const showSectionFilter =
+    sectionFilter != null &&
+    sectionFilterOptions != null &&
+    sectionFilterOptions.length > 1 &&
+    onSectionFilterChange != null;
+
   return (
     <>
+      {showSectionFilter ? (
+        <select
+          aria-label="Filter log sections"
+          className="h-8 max-w-[14rem] shrink-0 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-800"
+          value={sectionFilter}
+          onChange={(event) => onSectionFilterChange(event.target.value)}
+        >
+          {sectionFilterOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : null}
       <Input
         value={search}
         onChange={(event) => onSearchChange(event.target.value)}

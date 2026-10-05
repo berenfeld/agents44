@@ -159,6 +159,20 @@ def cancel_active_handle(key: str) -> bool:
     return True
 
 
+def _part_kind(part: object | None) -> str:
+    if part is None:
+        return ""
+    kind = getattr(part, "part_kind", None)
+    if isinstance(kind, str) and kind:
+        return kind
+    name = type(part).__name__
+    if name == "ThinkingPart":
+        return "thinking"
+    if name == "TextPart":
+        return "text"
+    return name
+
+
 def _format_event(event: object) -> str | None:
     name = type(event).__name__
     if name == "FunctionToolCallEvent":
@@ -186,6 +200,15 @@ def _format_event(event: object) -> str | None:
             content = getattr(part, "content", None)
         body = _format_tool_result_content(content)
         return f"--- Tool result: {tool_name} ---\n{body}"
+    if name == "PartEndEvent":
+        part = getattr(event, "part", None)
+        kind = _part_kind(part)
+        content = str(getattr(part, "content", None) or "").strip()
+        if not content:
+            return None
+        if kind == "thinking":
+            return f"--- Reasoning ---\n{content}"
+        return None
     if name == "FinalResultEvent":
         return "--- Final result ---"
     return None
@@ -264,12 +287,17 @@ class AgentRuntime:
             headers["X-Conversation-Id"] = str(conversation_id)
 
         mcp_toolset = MCPToolset(_mcp_sse_url(), headers=headers)
+        # Ask models that support it (Gemini 3.x, etc.) to return thoughts so we can log Reasoning.
+        model_settings = None
+        if normalize_model_id(model_id).startswith(("gemini/", "google/")):
+            model_settings = {"thinking": True}
         agent = Agent(
             model,
             deps_type=RuntimeDeps,
             tools=[build_shell_tool()],
             toolsets=[mcp_toolset],
             retries=2,
+            model_settings=model_settings,
         )
 
         @agent.instructions

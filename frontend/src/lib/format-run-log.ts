@@ -485,3 +485,101 @@ export function formatRunLog(content: string): string {
   }
   return sections.join("\n");
 }
+
+/** Purple section header, optionally followed by a live clock stamp from RunLogViewer. */
+const LOG_SECTION_HEADER_RE = /^--- (.+?) ---(?:\s+\d{2}:\d{2}:\d{2})?$/;
+
+export type LogSectionFilterOption = {
+  value: string;
+  label: string;
+};
+
+export type LogSection = {
+  header: string | null;
+  filterKey: string | null;
+  text: string;
+};
+
+function sectionFilterKey(title: string): string {
+  const toolCall = title.match(/^Tool call:\s*(.+)$/i);
+  if (toolCall) {
+    return `tool-call:${toolCall[1].trim()}`;
+  }
+  const toolResult = title.match(/^Tool result:\s*(.+)$/i);
+  if (toolResult) {
+    return `tool-result:${toolResult[1].trim()}`;
+  }
+  return title.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function sectionFilterLabel(title: string): string {
+  return title.trim();
+}
+
+/** Split a formatted run log into purple `--- Section ---` blocks (plus any prologue). */
+export function splitLogSections(content: string): LogSection[] {
+  if (!content) {
+    return [];
+  }
+  const lines = content.split("\n");
+  const sections: LogSection[] = [];
+  let currentHeader: string | null = null;
+  let currentKey: string | null = null;
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (!currentHeader && buffer.every((line) => !line.trim())) {
+      buffer = [];
+      return;
+    }
+    sections.push({
+      header: currentHeader,
+      filterKey: currentKey,
+      text: buffer.join("\n"),
+    });
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    const match = LOG_SECTION_HEADER_RE.exec(line);
+    if (match) {
+      flush();
+      currentHeader = match[1];
+      currentKey = sectionFilterKey(match[1]);
+      buffer = [line];
+      continue;
+    }
+    buffer.push(line);
+  }
+  flush();
+  return sections;
+}
+
+/** Distinct filter options for the log modal (All + each section / tool). */
+export function listLogSectionFilters(content: string): LogSectionFilterOption[] {
+  const seen = new Map<string, string>();
+  for (const section of splitLogSections(content)) {
+    if (!section.header || !section.filterKey) {
+      continue;
+    }
+    if (!seen.has(section.filterKey)) {
+      seen.set(section.filterKey, sectionFilterLabel(section.header));
+    }
+  }
+  const options = [...seen.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return [{ value: "all", label: "All sections" }, ...options];
+}
+
+/** Keep only matching purple sections; prologue (no header) is dropped when filtering. */
+export function filterLogBySection(content: string, filter: string): string {
+  const normalized = filter.trim() || "all";
+  if (normalized === "all") {
+    return content;
+  }
+  const kept = splitLogSections(content)
+    .filter((section) => section.filterKey === normalized)
+    .map((section) => section.text.trimEnd());
+  return kept.join("\n\n").trim();
+}
