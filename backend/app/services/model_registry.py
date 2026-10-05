@@ -4,7 +4,7 @@ from typing import Any
 
 from flask import current_app
 
-from app.errors import ModelDiscoveryError
+from app.errors import APIClientError, ModelDiscoveryError
 from app.extensions import db
 from app.models import SystemAgent
 from app.services.params import get_param_json, get_supported_models_param
@@ -83,8 +83,15 @@ def init_model_registry(app) -> None:
 
 
 def get_supported_models() -> list[str]:
-    """Always read the allowlist from Settings (DB), not a process cache."""
-    return configured_models()
+    """Always read the allowlist from Settings (DB), not a process cache.
+
+    Raises APIClientError (4xx) when empty so API callers get an operator-safe message
+    instead of a 500 from ModelDiscoveryError.
+    """
+    try:
+        return configured_models()
+    except ModelDiscoveryError as exc:
+        raise APIClientError(str(exc) or "SUPPORTED_MODELS is empty in Settings", 400) from exc
 
 
 def get_default_model() -> str:

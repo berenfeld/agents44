@@ -38,8 +38,11 @@ def list_models():
 @api_endpoint
 @login_required
 def list_runs():
-    page = max(int(request.args.get("page", 1)), 1)
-    per_page = min(max(int(request.args.get("per_page", 50)), 1), 200)
+    try:
+        page = max(int(request.args.get("page", 1)), 1)
+        per_page = min(max(int(request.args.get("per_page", 50)), 1), 200)
+    except (TypeError, ValueError) as exc:
+        raise APIClientError("page and per_page must be integers", 400) from exc
     statuses = _parse_run_status_filter(request.args.get("status"))
     query = SystemAgentRun.query.options(joinedload(SystemAgentRun.agent)).order_by(SystemAgentRun.id.desc())
     if statuses:

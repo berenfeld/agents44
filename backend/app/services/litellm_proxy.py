@@ -90,23 +90,25 @@ async def _health(_request: Request) -> Response:
     return JSONResponse({"status": "alive"})
 
 
+def _openai_model_name(model: str) -> str:
+    value = (model or "").strip()
+    if value.lower().startswith("openai/"):
+        return value.split("/", 1)[1]
+    return value
+
+
+def _is_openai_model(model: str) -> bool:
+    return (model or "").strip().lower().startswith("openai/")
+
+
 def _chat_tools_require_reasoning_none(model: str) -> bool:
     """OpenAI GPT-6 Luna/Sol allow Chat Completions tools only with reasoning_effort=none."""
-    value = (model or "").strip().lower()
-    if value.startswith("openai/"):
-        value = value.split("/", 1)[1]
+    value = _openai_model_name(model).lower()
     return value in {"gpt-6-luna", "gpt-6-sol"} or value.endswith("-luna")
 
 
-def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> dict[str, Any]:
-    model = str(body.get("model") or "").strip()
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": body.get("messages"),
-        "stream": stream,
-        "drop_params": True,
-        "api_key": api_key,
-    }
+def _copy_completion_params(body: dict[str, Any]) -> dict[str, Any]:
+    params: dict[str, Any] = {}
     for key in (
         "temperature",
         "top_p",
@@ -121,24 +123,45 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> d
         "presence_penalty",
         "frequency_penalty",
         "seed",
-        # Gemini / reasoning models: pydantic-ai sends these so thoughts are returned.
         "reasoning_effort",
         "thinking",
         "extra_body",
     ):
         if key in body and body[key] is not None:
-            kwargs[key] = body[key]
-    # OpenAI rejects Chat Completions function tools when reasoning_effort is omitted
-    # (defaults to medium) or non-none for Luna/Sol. Force none when tools are present.
-    tools = body.get("tools")
-    if isinstance(tools, list) and tools and _chat_tools_require_reasoning_none(model):
-        if kwargs.get("reasoning_effort") not in (None, "none"):
-            logger.warning(
-                "Forcing reasoning_effort=none for model=%s with tools (was %r)",
-                model,
-                kwargs.get("reasoning_effort"),
-            )
-        kwargs["reasoning_effort"] = "none"
+            params[key] = body[key]
+    return params
+
+
+def _apply_openai_tools_reasoning(model: str, params: dict[str, Any]) -> None:
+    """Force reasoning_effort=none for Luna/Sol Chat Completions + function tools."""
+    tools = params.get("tools")
+    if not (isinstance(tools, list) and tools and _chat_tools_require_reasoning_none(model)):
+        return
+    previous = params.get("reasoning_effort")
+    if previous not in (None, "none"):
+        logger.warning(
+            "Forcing reasoning_effort=none for model=%s with tools (was %r)",
+            model,
+            previous,
+        )
+    params["reasoning_effort"] = "none"
+
+
+def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> dict[str, Any]:
+    model = str(body.get("model") or "").strip()
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": body.get("messages"),
+        "stream": stream,
+        "drop_params": True,
+        "api_key": api_key,
+        **_copy_completion_params(body),
+    }
+    _apply_openai_tools_reasoning(model, kwargs)
+    # LiteLLM drop_params can strip reasoning_effort for unknown GPT-6 ids before
+    # OpenAI sees it; keep the param when we intentionally set none for tools.
+    if kwargs.get("reasoning_effort") == "none" and isinstance(kwargs.get("tools"), list) and kwargs["tools"]:
+        kwargs["drop_params"] = False
     # Pydantic AI streams with stream_options.include_usage=True. LiteLLM only emits
     # token usage on the final SSE chunk when that flag is set — without it Gemini
     # (and other providers) complete successfully with empty tokens/cost.
@@ -151,6 +174,40 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> d
         else:
             kwargs["stream_options"] = {"include_usage": True}
     return kwargs
+
+
+async def _openai_chat_create(body: dict[str, Any], *, stream: bool, api_key: str) -> Any:
+    """Call OpenAI Chat Completions directly — avoids LiteLLM dropping reasoning_effort."""
+    from openai import AsyncOpenAI
+
+    model = str(body.get("model") or "").strip()
+    kwargs: dict[str, Any] = {
+        "model": _openai_model_name(model),
+        "messages": body.get("messages"),
+        "stream": stream,
+        **_copy_completion_params(body),
+    }
+    # Direct OpenAI path does not understand LiteLLM-only extras.
+    kwargs.pop("thinking", None)
+    kwargs.pop("extra_body", None)
+    _apply_openai_tools_reasoning(model, kwargs)
+    if stream:
+        stream_options = body.get("stream_options")
+        if isinstance(stream_options, dict):
+            merged = dict(stream_options)
+            merged.setdefault("include_usage", True)
+            kwargs["stream_options"] = merged
+        else:
+            kwargs["stream_options"] = {"include_usage": True}
+    logger.info(
+        "OpenAI direct %s model=%s reasoning_effort=%r tools=%s",
+        "stream" if stream else "completion",
+        kwargs.get("model"),
+        kwargs.get("reasoning_effort"),
+        len(kwargs["tools"]) if isinstance(kwargs.get("tools"), list) else 0,
+    )
+    client = AsyncOpenAI(api_key=api_key)
+    return await client.chat.completions.create(**kwargs)
 
 
 def _upstream_error_message(exc: BaseException) -> str:
@@ -180,7 +237,7 @@ async def _chat_completions(request: Request) -> Response:
         return JSONResponse({"error": {"message": "Unauthorized", "type": "auth_error"}}, status_code=401)
     try:
         body: dict[str, Any] = await request.json()
-    except Exception:  # noqa: BLE001
+    except (json.JSONDecodeError, ValueError, TypeError):
         return JSONResponse({"error": {"message": "Invalid JSON body", "type": "invalid_request"}}, status_code=400)
 
     model = str(body.get("model") or "").strip()
@@ -227,9 +284,13 @@ async def _chat_completions(request: Request) -> Response:
     if stream:
         # Open the upstream stream before returning StreamingResponse so auth/param
         # failures become HTTP 502 JSON (not a dropped socket → opaque "Connection error.").
-        kwargs = _completion_kwargs(body, stream=True, api_key=api_key)
         try:
-            upstream = await litellm.acompletion(**kwargs)
+            if _is_openai_model(model):
+                upstream = await _openai_chat_create(body, stream=True, api_key=api_key)
+            else:
+                upstream = await litellm.acompletion(
+                    **_completion_kwargs(body, stream=True, api_key=api_key)
+                )
         except Exception as exc:  # noqa: BLE001
             logger.exception("LiteLLM stream open failed for model=%s", model)
             return JSONResponse(
@@ -242,9 +303,13 @@ async def _chat_completions(request: Request) -> Response:
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    kwargs = _completion_kwargs(body, stream=False, api_key=api_key)
     try:
-        result = await litellm.acompletion(**kwargs)
+        if _is_openai_model(model):
+            result = await _openai_chat_create(body, stream=False, api_key=api_key)
+        else:
+            result = await litellm.acompletion(
+                **_completion_kwargs(body, stream=False, api_key=api_key)
+            )
     except Exception as exc:  # noqa: BLE001
         logger.exception("LiteLLM completion failed for model=%s", model)
         return JSONResponse(
