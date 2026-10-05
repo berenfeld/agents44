@@ -10,10 +10,18 @@ const MODEL_PARAM_KEYS = new Set(["MODEL_PRICING", "SUPPORTED_MODELS"]);
 type ModelRow = {
   id: string;
   inputPerMillion: string;
+  cacheReadPerMillion: string;
   outputPerMillion: string;
 };
 
-type PricingMap = Record<string, { input_per_million?: number; output_per_million?: number }>;
+type PricingMap = Record<
+  string,
+  {
+    input_per_million?: number;
+    cache_read_per_million?: number;
+    output_per_million?: number;
+  }
+>;
 
 function formatParamValue(key: string, value: string): string {
   if (!MODEL_PARAM_KEYS.has(key)) {
@@ -91,6 +99,10 @@ function modelRowsFromParams(params: SystemParam[]): ModelRow[] {
         entry.input_per_million === undefined || entry.input_per_million === null
           ? ""
           : String(entry.input_per_million),
+      cacheReadPerMillion:
+        entry.cache_read_per_million === undefined || entry.cache_read_per_million === null
+          ? ""
+          : String(entry.cache_read_per_million),
       outputPerMillion:
         entry.output_per_million === undefined || entry.output_per_million === null
           ? ""
@@ -115,10 +127,15 @@ function applyModelRowsToParams(params: SystemParam[], rows: ModelRow[]): System
     }
     const input = Number(row.inputPerMillion);
     const output = Number(row.outputPerMillion);
-    pricing[id] = {
+    const cacheRead = Number(row.cacheReadPerMillion);
+    const entry: PricingMap[string] = {
       input_per_million: Number.isFinite(input) ? input : 0,
       output_per_million: Number.isFinite(output) ? output : 0,
     };
+    if (row.cacheReadPerMillion.trim() !== "" && Number.isFinite(cacheRead)) {
+      entry.cache_read_per_million = cacheRead;
+    }
+    pricing[id] = entry;
   }
   const supportedValue = JSON.stringify(uniqueModels, null, 2);
   const pricingValue = JSON.stringify(pricing, null, 2);
@@ -346,8 +363,9 @@ export default function SettingsPage() {
           <div className="rounded-lg border bg-white p-4">
             <Label>Models and pricing</Label>
             <p className="mt-1 text-sm text-slate-600">
-              Provider-prefixed LiteLLM ids (e.g. <code>gemini/gemini-3.8-flash</code>). Costs are USD per 1M tokens
-              for run estimates. Adding a row updates both the model allowlist and pricing.
+              Provider-prefixed LiteLLM ids (e.g. <code>openai/gpt-6-luna</code>,{" "}
+              <code>gemini/gemini-3.8-flash</code>). Costs are USD per 1M tokens for run estimates. Cached input is
+              optional. Adding a row updates both the model allowlist and pricing.
             </p>
             <div className="mt-3 overflow-x-auto">
               <table className="min-w-full border-collapse text-sm">
@@ -355,6 +373,7 @@ export default function SettingsPage() {
                   <tr className="border-b text-left text-slate-600">
                     <th className="px-2 py-2 font-medium">Model id</th>
                     <th className="px-2 py-2 font-medium">Input $/1M</th>
+                    <th className="px-2 py-2 font-medium">Cached $/1M</th>
                     <th className="px-2 py-2 font-medium">Output $/1M</th>
                     <th className="px-2 py-2 font-medium" />
                   </tr>
@@ -377,6 +396,15 @@ export default function SettingsPage() {
                           value={row.inputPerMillion}
                           placeholder="0"
                           onChange={(e) => updateModelRow(index, { inputPerMillion: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <Input
+                          className="w-28 font-mono text-sm"
+                          inputMode="decimal"
+                          value={row.cacheReadPerMillion}
+                          placeholder="—"
+                          onChange={(e) => updateModelRow(index, { cacheReadPerMillion: e.target.value })}
                         />
                       </td>
                       <td className="px-2 py-2">
@@ -412,7 +440,7 @@ export default function SettingsPage() {
                 onClick={() => {
                   setModelRows((prev) => [
                     ...prev,
-                    { id: "", inputPerMillion: "", outputPerMillion: "" },
+                    { id: "", inputPerMillion: "", cacheReadPerMillion: "", outputPerMillion: "" },
                   ]);
                   setSaved(false);
                 }}

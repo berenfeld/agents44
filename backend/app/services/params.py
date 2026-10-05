@@ -24,7 +24,10 @@ LLM_API_KEY_PARAMS = (
     {
         "key": "OPENAI_API_KEY",
         "value": "",
-        "description": "OpenAI API key for openai/... models. Settings only — not .env.",
+        "description": (
+            "OpenAI API key for openai/... ChatGPT models (gpt-6-luna, gpt-6.1-sol, gpt-6-astra, …). "
+            "Settings only — not .env."
+        ),
     },
     {
         "key": "DASHSCOPE_API_KEY",
@@ -38,6 +41,9 @@ DEFAULT_SUPPORTED_MODELS = [
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5-20251001",
     "gemini/gemini-3.8-flash",
+    "openai/gpt-6-luna",
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-astra",
 ]
 
 DEFAULT_MODEL_PRICING = {
@@ -86,6 +92,22 @@ DEFAULT_MODEL_PRICING = {
         "input_per_million": 0.75,
         "output_per_million": 3.75,
     },
+    # OpenAI GPT-6 family (USD per 1M tokens).
+    "openai/gpt-6-luna": {
+        "input_per_million": 0.10,
+        "cache_read_per_million": 0.01,
+        "output_per_million": 0.50,
+    },
+    "openai/gpt-6.1-sol": {
+        "input_per_million": 2.0,
+        "cache_read_per_million": 0.10,
+        "output_per_million": 10.0,
+    },
+    "openai/gpt-6-astra": {
+        "input_per_million": 10.0,
+        "cache_read_per_million": 1.0,
+        "output_per_million": 50.0,
+    },
 }
 
 SEED_PARAMS = [
@@ -97,7 +119,10 @@ SEED_PARAMS = [
     {
         "key": "MODEL_PRICING",
         "value": json.dumps(DEFAULT_MODEL_PRICING, indent=2, sort_keys=True),
-        "description": "USD per 1M tokens by provider-prefixed model id (e.g. anthropic/..., gemini/...)",
+        "description": (
+            "USD per 1M tokens by provider-prefixed model id "
+            "(anthropic/..., gemini/..., openai/...). Optional cache_read_per_million."
+        ),
     },
     *[
         {"key": item["key"], "value": item["value"], "description": item["description"]}
@@ -276,7 +301,7 @@ def _ensure_supported_models_param() -> None:
     """Seed SUPPORTED_MODELS from code defaults only when missing/empty."""
     description = (
         "JSON array of provider-prefixed LiteLLM model ids shown in agent/chat selects "
-        "(e.g. anthropic/..., gemini/...). Edit in Settings — not in .env."
+        "(e.g. anthropic/..., gemini/..., openai/...). Edit in Settings — not in .env."
     )
     row = SystemParam.query.filter_by(key="SUPPORTED_MODELS").first()
     if row and parse_supported_models(row.value):
@@ -375,7 +400,8 @@ def _merge_model_pricing_prefixes() -> None:
     if changed:
         row.value = json.dumps(pricing, indent=2, sort_keys=True)
         row.description = (
-            "USD per 1M tokens by provider-prefixed model id (e.g. anthropic/..., gemini/...)"
+            "USD per 1M tokens by provider-prefixed model id "
+            "(anthropic/..., gemini/..., openai/...). Optional cache_read_per_million."
         )
 
 

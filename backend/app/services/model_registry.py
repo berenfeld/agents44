@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_model_id(model: str) -> str:
-    """Map legacy bare Claude ids to LiteLLM provider-prefixed ids."""
+    """Map legacy bare model ids to LiteLLM provider-prefixed ids."""
     value = (model or "").strip()
     if not value:
         return value
@@ -23,6 +23,8 @@ def normalize_model_id(model: str) -> str:
         return f"anthropic/{value}"
     if value.startswith("gemini"):
         return f"gemini/{value}"
+    if value.startswith("gpt"):
+        return f"openai/{value}"
     return value
 
 
@@ -107,14 +109,16 @@ def estimate_cost_from_usage(model: str, usage: dict[str, Any]) -> float | None:
         return None
     input_per_m = float(pricing["input_per_million"])
     output_per_m = float(pricing["output_per_million"])
+    cache_read_raw = pricing.get("cache_read_per_million")
+    cache_read_per_m = float(cache_read_raw) if cache_read_raw is not None else input_per_m * CACHE_READ_INPUT_MULTIPLIER
     tin = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
     cc = int(usage.get("cache_creation_input_tokens") or 0)
-    cr = int(usage.get("cache_read_input_tokens") or 0)
+    cr = int(usage.get("cache_read_input_tokens") or usage.get("cache_read_tokens") or 0)
     tout = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
     cost = (
         tin * input_per_m / 1_000_000
         + cc * input_per_m * CACHE_WRITE_INPUT_MULTIPLIER / 1_000_000
-        + cr * input_per_m * CACHE_READ_INPUT_MULTIPLIER / 1_000_000
+        + cr * cache_read_per_m / 1_000_000
         + tout * output_per_m / 1_000_000
     )
     return round(cost, 6)
