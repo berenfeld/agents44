@@ -701,10 +701,11 @@ export default function AgentsRunsPage() {
 
       <ConfirmModal
         open={!!stopRun}
-        onOpenChange={(open) => !open && setStopRun(null)}
+        onOpenChange={(open) => !open && stoppingRunId == null && setStopRun(null)}
         title="Stop run?"
-        confirmLabel="Stop"
+        confirmLabel={stoppingRunId != null ? "Stopping..." : "Stop"}
         destructive
+        busy={stoppingRunId != null}
         description={
           stopRun ? (
             <p>

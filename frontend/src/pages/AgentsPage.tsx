@@ -43,6 +43,7 @@ export default function AgentsPage() {
   const [triggerAgent, setTriggerAgent] = useState<Agent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [patchingAgentId, setPatchingAgentId] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [draftCrond, setDraftCrond] = useState<Record<number, string>>({});
   const [draftTimeout, setDraftTimeout] = useState<Record<number, string>>({});
@@ -143,13 +144,17 @@ export default function AgentsPage() {
     agent: Agent,
     patch: Partial<Pick<Agent, "model" | "enabled" | "crond" | "timeout_seconds">>,
   ) => {
+    setPatchingAgentId(agent.id);
     try {
       await api.put(`/agents/${agent.id}`, buildAgentWritePayload({ ...agent, ...patch }));
       await load();
+      setNotice({ title: "Agent updated", message: `Updated ${agent.name}.` });
       return true;
     } catch (err) {
       setNotice({ title: "Could not update agent", message: userFacingApiError(err) });
       return false;
+    } finally {
+      setPatchingAgentId(null);
     }
   };
 
@@ -321,13 +326,16 @@ export default function AgentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((agent) => (
+                {sorted.map((agent) => {
+                  const patching = patchingAgentId === agent.id;
+                  return (
                   <tr key={agent.id} className="border-t">
                     <td className="px-4 py-2 font-medium">
                       <span className="inline-flex items-center gap-2">
                         {agent.name}
                         {agent.is_running ? <AgentRunStateTag status="running" /> : null}
                         {agent.is_pending ? <AgentRunStateTag status="pending" /> : null}
+                        {patching ? <span className="text-xs text-slate-500">Updating...</span> : null}
                       </span>
                     </td>
                     <td className="px-4 py-2">{agent.department}</td>
@@ -335,6 +343,7 @@ export default function AgentsPage() {
                       <InlineModelSelect
                         value={agent.model}
                         models={models}
+                        disabled={patching}
                         onChange={(model) => {
                           if (model !== agent.model) void patchAgent(agent, { model });
                         }}
@@ -343,6 +352,7 @@ export default function AgentsPage() {
                     <td className="px-4 py-2">
                       <InlineCrondInput
                         value={draftCrond[agent.id] ?? ""}
+                        disabled={patching}
                         onChange={(value) => {
                           setDraftCrond((prev) => ({ ...prev, [agent.id]: value }));
                         }}
@@ -352,6 +362,7 @@ export default function AgentsPage() {
                     <td className="px-4 py-2">
                       <InlineTimeoutInput
                         value={draftTimeout[agent.id] ?? formatTimeoutSeconds(agent.timeout_seconds)}
+                        disabled={patching}
                         onChange={(value) => {
                           setDraftTimeout((prev) => ({ ...prev, [agent.id]: value }));
                         }}
@@ -362,6 +373,7 @@ export default function AgentsPage() {
                     <td className="px-4 py-2">
                       <EnabledToggle
                         value={agent.enabled}
+                        disabled={patching}
                         onChange={(enabled) => {
                           if (enabled !== agent.enabled) void patchAgent(agent, { enabled });
                         }}
@@ -377,19 +389,23 @@ export default function AgentsPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </DesktopTableShell>
 
           <MobileCardList>
-            {sorted.map((agent) => (
+            {sorted.map((agent) => {
+              const patching = patchingAgentId === agent.id;
+              return (
               <DataCard key={agent.id}>
                 <DataCardTitle>
                   <span className="inline-flex items-center gap-2">
                     {agent.name}
                     {agent.is_running ? <AgentRunStateTag status="running" /> : null}
                     {agent.is_pending ? <AgentRunStateTag status="pending" /> : null}
+                    {patching ? <span className="text-xs text-slate-500">Updating...</span> : null}
                   </span>
                 </DataCardTitle>
                 <dl>
@@ -398,6 +414,7 @@ export default function AgentsPage() {
                     <InlineModelSelect
                       value={agent.model}
                       models={models}
+                      disabled={patching}
                       onChange={(model) => {
                         if (model !== agent.model) void patchAgent(agent, { model });
                       }}
@@ -406,6 +423,7 @@ export default function AgentsPage() {
                   <DataCardField label="Cron">
                     <InlineCrondInput
                       value={draftCrond[agent.id] ?? ""}
+                      disabled={patching}
                       onChange={(value) => {
                         setDraftCrond((prev) => ({ ...prev, [agent.id]: value }));
                       }}
@@ -415,6 +433,7 @@ export default function AgentsPage() {
                   <DataCardField label="Timeout">
                     <InlineTimeoutInput
                       value={draftTimeout[agent.id] ?? formatTimeoutSeconds(agent.timeout_seconds)}
+                      disabled={patching}
                       onChange={(value) => {
                         setDraftTimeout((prev) => ({ ...prev, [agent.id]: value }));
                       }}
@@ -425,6 +444,7 @@ export default function AgentsPage() {
                   <DataCardField label="Enabled">
                     <EnabledToggle
                       value={agent.enabled}
+                      disabled={patching}
                       onChange={(enabled) => {
                         if (enabled !== agent.enabled) void patchAgent(agent, { enabled });
                       }}
@@ -439,7 +459,8 @@ export default function AgentsPage() {
                   <Button onClick={() => setTriggerAgent(agent)}>Trigger now</Button>
                 </DataCardActions>
               </DataCard>
-            ))}
+              );
+            })}
           </MobileCardList>
         </>
       )}
@@ -449,6 +470,7 @@ export default function AgentsPage() {
       <AgentFormDialog
         open={formOpen}
         onOpenChange={setFormOpen}
+        onNotice={showNotice}
         onSubmit={async (values) => {
           try {
             await api.post("/agents", values);
@@ -464,14 +486,21 @@ export default function AgentsPage() {
       <ConfirmModal
         open={!!pendingTimeoutChange}
         onOpenChange={(open) => {
-          if (!open && pendingTimeoutChange) {
+          if (!open && pendingTimeoutChange && patchingAgentId == null) {
             revertTimeout(pendingTimeoutChange.agent);
             setPendingTimeoutChange(null);
           }
         }}
         title="Update timeout for running agent?"
-        confirmLabel={pendingTimeoutImpact?.immediate ? "Update and stop" : "Update timeout"}
+        confirmLabel={
+          patchingAgentId != null
+            ? "Updating..."
+            : pendingTimeoutImpact?.immediate
+              ? "Update and stop"
+              : "Update timeout"
+        }
         destructive={!!pendingTimeoutImpact?.immediate}
+        busy={patchingAgentId != null}
         description={
           pendingTimeoutImpact ? (
             <div className="space-y-2">

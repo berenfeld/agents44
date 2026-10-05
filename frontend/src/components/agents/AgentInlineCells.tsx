@@ -7,26 +7,31 @@ import { getTimeoutError } from "@/lib/timeout";
 export function EnabledToggle({
   value,
   onChange,
+  disabled = false,
 }: {
   value: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
-  return <Switch checked={value} onCheckedChange={onChange} />;
+  return <Switch checked={value} onCheckedChange={onChange} disabled={disabled} />;
 }
 
 export function InlineModelSelect({
   value,
   models,
   onChange,
+  disabled = false,
 }: {
   value: string;
   models: string[];
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <select
-      className="w-full min-w-[12rem] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
+      className="w-full min-w-[12rem] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm disabled:opacity-50"
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
     >
       {models.map((model) => (
@@ -42,15 +47,17 @@ export function InlineCrondInput({
   value,
   onChange,
   onCommit,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onCommit: () => void;
+  disabled?: boolean;
 }) {
   const error = getCrontabError(value);
 
   const tryCommit = () => {
-    if (error) return;
+    if (disabled || error) return;
     onCommit();
   };
 
@@ -62,6 +69,7 @@ export function InlineCrondInput({
           value={value}
           placeholder="Not Scheduled"
           aria-invalid={!!error}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           onBlur={tryCommit}
           onKeyDown={(e) => {
@@ -83,15 +91,18 @@ export function InlineTimeoutInput({
   onChange,
   onCommit,
   onRevert,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onCommit: () => void;
   onRevert: () => void;
+  disabled?: boolean;
 }) {
   const error = getTimeoutError(value);
 
   const tryCommit = () => {
+    if (disabled) return;
     if (error) {
       onRevert();
       return;
@@ -106,6 +117,7 @@ export function InlineTimeoutInput({
         value={value}
         placeholder="5m"
         aria-invalid={!!error}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value.toLowerCase())}
         onBlur={tryCommit}
         onKeyDown={(e) => {

@@ -90,9 +90,18 @@ async def _health(_request: Request) -> Response:
     return JSONResponse({"status": "alive"})
 
 
+def _chat_tools_require_reasoning_none(model: str) -> bool:
+    """OpenAI GPT-6 Luna/Sol allow Chat Completions tools only with reasoning_effort=none."""
+    value = (model or "").strip().lower()
+    if value.startswith("openai/"):
+        value = value.split("/", 1)[1]
+    return value in {"gpt-6-luna", "gpt-6-sol"} or value.endswith("-luna")
+
+
 def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> dict[str, Any]:
+    model = str(body.get("model") or "").strip()
     kwargs: dict[str, Any] = {
-        "model": str(body.get("model") or "").strip(),
+        "model": model,
         "messages": body.get("messages"),
         "stream": stream,
         "drop_params": True,
@@ -119,6 +128,17 @@ def _completion_kwargs(body: dict[str, Any], *, stream: bool, api_key: str) -> d
     ):
         if key in body and body[key] is not None:
             kwargs[key] = body[key]
+    # OpenAI rejects Chat Completions function tools when reasoning_effort is omitted
+    # (defaults to medium) or non-none for Luna/Sol. Force none when tools are present.
+    tools = body.get("tools")
+    if isinstance(tools, list) and tools and _chat_tools_require_reasoning_none(model):
+        if kwargs.get("reasoning_effort") not in (None, "none"):
+            logger.warning(
+                "Forcing reasoning_effort=none for model=%s with tools (was %r)",
+                model,
+                kwargs.get("reasoning_effort"),
+            )
+        kwargs["reasoning_effort"] = "none"
     # Pydantic AI streams with stream_options.include_usage=True. LiteLLM only emits
     # token usage on the final SSE chunk when that flag is set — without it Gemini
     # (and other providers) complete successfully with empty tokens/cost.

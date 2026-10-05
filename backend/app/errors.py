@@ -11,6 +11,7 @@ from app.middleware.logging import log_api_request, log_api_response
 logger = logging.getLogger(__name__)
 
 INTERNAL_ERROR_MESSAGE = "Internal server error"
+_AFTER_COMMIT_KEY = "after_commit_callbacks"
 
 
 class APIClientError(Exception):
@@ -22,6 +23,24 @@ class APIClientError(Exception):
 
 class ModelDiscoveryError(RuntimeError):
     pass
+
+
+def register_after_commit(callback) -> None:
+    """Queue work to run after `@api_endpoint` commits (e.g. enqueue a worker)."""
+    hooks = db.session.info.setdefault(_AFTER_COMMIT_KEY, [])
+    hooks.append(callback)
+
+
+def _pop_after_commit_callbacks() -> list:
+    return list(db.session.info.pop(_AFTER_COMMIT_KEY, []) or [])
+
+
+def _run_after_commit_callbacks(callbacks: list) -> None:
+    for callback in callbacks:
+        try:
+            callback()
+        except Exception:  # noqa: BLE001 — commit already succeeded; log and continue
+            logger.exception("after_commit callback failed")
 
 
 def _coerce_response(result):
@@ -48,9 +67,12 @@ def api_endpoint(view_func):
         try:
             result = view_func(*args, **kwargs)
             response = _coerce_response(result)
+            callbacks = _pop_after_commit_callbacks()
             db.session.commit()
+            _run_after_commit_callbacks(callbacks)
             return log_api_response(response)
         except APIClientError as exc:
+            _pop_after_commit_callbacks()
             db.session.rollback()
             logger.error(
                 "API client error on %s %s: %s (status=%s)",
@@ -62,6 +84,7 @@ def api_endpoint(view_func):
             response = make_response(jsonify({"error": exc.message}), exc.status_code)
             return log_api_response(response)
         except ValidationError as exc:
+            _pop_after_commit_callbacks()
             db.session.rollback()
             logger.error(
                 "Validation error on %s %s: %s",
@@ -72,11 +95,13 @@ def api_endpoint(view_func):
             response = make_response(jsonify({"error": exc.messages}), 400)
             return log_api_response(response)
         except FileNotFoundError:
+            _pop_after_commit_callbacks()
             db.session.rollback()
             logger.error("Not found on %s %s", request.method, request.path)
             response = make_response(jsonify({"error": "Not found"}), 404)
             return log_api_response(response)
         except HTTPException as exc:
+            _pop_after_commit_callbacks()
             db.session.rollback()
             logger.error(
                 "HTTP error on %s %s: %s (status=%s)",
@@ -91,6 +116,7 @@ def api_endpoint(view_func):
             )
             return log_api_response(response)
         except Exception:
+            _pop_after_commit_callbacks()
             db.session.rollback()
             logger.exception("Unhandled API error on %s %s", request.method, request.path)
             response = make_response(jsonify({"error": INTERNAL_ERROR_MESSAGE}), 500)

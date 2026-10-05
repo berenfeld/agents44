@@ -290,7 +290,8 @@ class AgentRuntime:
         # Ask models that support it (Gemini 3.x, etc.) to return thoughts so we can log Reasoning.
         # GPT-6 Luna / GPT-6 Sol only allow Chat Completions function calling with
         # reasoning_effort=none (default medium requires the Responses API).
-        model_settings = None
+        # Also enforced in litellm_proxy when tools are present.
+        model_settings: dict[str, Any] | None = None
         normalized_model = normalize_model_id(model_id)
         if normalized_model.startswith(("gemini/", "google/")):
             model_settings = {"thinking": True}

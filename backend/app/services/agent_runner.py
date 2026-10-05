@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 
-from flask import current_app
+from flask import current_app, has_request_context
 
-from app.errors import APIClientError
+from app.errors import APIClientError, register_after_commit
 from app.extensions import db
 from app.models import RunStatus, SystemAgent, SystemAgentRun, TriggerSource
 from app.services.agent_runtime import AgentRuntime
@@ -22,6 +22,8 @@ from app.services.outbound_email import build_email_instructions
 from app.services.params import (
     get_timeout_sigkill_grace_seconds,
     get_timeout_sigterm_grace_seconds,
+    provider_api_key_for_model,
+    provider_key_name_for_model,
 )
 from app.services.timeout import format_remaining_duration, format_timeout_seconds
 from app.services.whatsapp import build_whatsapp_instructions
@@ -698,6 +700,13 @@ def _is_busy() -> bool:
     return active is not None or _run_lock.locked()
 
 
+def require_provider_key_for_model(model: str) -> None:
+    if provider_api_key_for_model(model):
+        return
+    label = provider_key_name_for_model(model) or "Provider API key"
+    raise APIClientError(f"{label} is missing in Settings for model {model}", 400)
+
+
 def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None) -> SystemAgentRun:
     _ensure_worker()
     agent = db.session.get(SystemAgent, agent_id)
@@ -705,6 +714,7 @@ def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None)
         raise APIClientError("Agent not found", 404)
     if not agent.enabled:
         raise APIClientError("Agent is disabled", 400)
+    require_provider_key_for_model(agent.model)
 
     source = TriggerSource(trigger_source)
     pending_exists = _is_busy()
@@ -716,7 +726,8 @@ def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None)
         model=agent.model,
     )
     db.session.add(run)
-    db.session.commit()
+    db.session.flush()
+    item = {"run_id": run.id, "payload": payload}
     logger.info(
         "AGENT_RUN_QUEUED %s",
         json.dumps(
@@ -731,7 +742,12 @@ def start_agent(agent_id: int, trigger_source: str, payload: dict | None = None)
             default=str,
         ),
     )
-    _run_queue.put({"run_id": run.id, "payload": payload})
+    # API views: enqueue only after @api_endpoint commits. Background jobs commit here.
+    if has_request_context():
+        register_after_commit(lambda: _run_queue.put(item))
+    else:
+        db.session.commit()
+        _run_queue.put(item)
     return run
 
 

@@ -2,7 +2,15 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Agent, api, AgentWritePayload, buildAgentWritePayload, Department, ModelsResponse } from "@/api/client";
+import {
+  Agent,
+  api,
+  AgentWritePayload,
+  buildAgentWritePayload,
+  Department,
+  ModelsResponse,
+  userFacingApiError,
+} from "@/api/client";
 import { CrontabHelperLink } from "@/components/agents/CrontabHelperLink";
 import { Modal } from "@/components/ui/modal";
 import { Button, Input, Label, Switch } from "@/components/ui/primitives";
@@ -68,15 +76,18 @@ export function AgentFormDialog({
   onOpenChange,
   agent,
   onSubmit,
+  onNotice,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agent?: Agent;
   onSubmit: (values: AgentWritePayload) => Promise<void>;
+  onNotice?: (notice: { title: string; message: string }) => void;
 }) {
   const [models, setModels] = useState<ModelsResponse>({ models: [], default: "" });
   const [departments, setDepartments] = useState<Department[]>([]);
   const [created, setCreated] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -104,8 +115,9 @@ export function AgentFormDialog({
     }
 
     let cancelled = false;
-    Promise.all([api.get<ModelsResponse>("/models"), api.get<Department[]>("/departments")]).then(
-      ([modelsRes, departmentsRes]) => {
+    setLoadError(null);
+    Promise.all([api.get<ModelsResponse>("/models"), api.get<Department[]>("/departments")])
+      .then(([modelsRes, departmentsRes]) => {
         if (cancelled) return;
         setModels(modelsRes.data);
         setDepartments(departmentsRes.data);
@@ -117,13 +129,18 @@ export function AgentFormDialog({
           enabled: agent?.enabled ?? true,
           timeout: agent ? formatTimeoutSeconds(agent.timeout_seconds) : "5m",
         });
-      },
-    );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = userFacingApiError(err);
+        setLoadError(message);
+        onNotice?.({ title: "Could not load agent form", message });
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [open, agent, reset]);
+  }, [open, agent, reset, onNotice]);
 
   const enabled = watch("enabled");
 
@@ -142,6 +159,7 @@ export function AgentFormDialog({
       <form
         className="space-y-2.5"
         onSubmit={handleSubmit(async (values) => {
+          if (loadError) return;
           const timeoutSeconds = parseTimeoutInput(values.timeout);
           if (timeoutSeconds === null) return;
           setCreated(false);
@@ -162,6 +180,7 @@ export function AgentFormDialog({
           onOpenChange(false);
         })}
       >
+        {loadError ? <p className="text-sm text-red-600">{loadError}</p> : null}
         <FormField label="Name" htmlFor="name">
           <Input id="name" {...register("name")} disabled={!!agent} />
           {errors.name && <p className="text-sm text-red-600">{errors.name.message}</p>}
@@ -213,7 +232,10 @@ export function AgentFormDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button type="submit" disabled={isSubmitting || (!agent && departments.length === 0)}>
+          <Button
+            type="submit"
+            disabled={isSubmitting || !!loadError || (!agent && departments.length === 0)}
+          >
             {submitLabel}
           </Button>
         </div>

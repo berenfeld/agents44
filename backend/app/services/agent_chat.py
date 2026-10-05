@@ -4,7 +4,7 @@ import queue
 import threading
 from datetime import datetime, timezone
 
-from app.errors import APIClientError
+from app.errors import APIClientError, register_after_commit
 from app.extensions import db
 from app.models import (
     AgentChatMessageRole,
@@ -14,7 +14,11 @@ from app.models import (
     SystemAgentChatMessage,
 )
 from app.models.agent_chat_conversation import DEFAULT_CONVERSATION_TITLE, MAX_CONVERSATION_TITLE_LEN
-from app.services.agent_runner import build_system_tools_instructions, build_timeout_instructions
+from app.services.agent_runner import (
+    build_system_tools_instructions,
+    build_timeout_instructions,
+    require_provider_key_for_model,
+)
 from app.services.agent_runtime import AgentRuntime
 from app.services.agent_runtime.runtime import cancel_active_handle, get_active_handle
 from app.services.db_provisioning import build_agent_db_instructions
@@ -364,6 +368,7 @@ def send_message(conversation: SystemAgentChatConversation, content: str) -> Sys
         raise APIClientError("Agent is disabled", 400)
     if conversation_is_busy(conversation.id):
         raise APIClientError("Agent is still responding", 409)
+    require_provider_key_for_model(agent.model)
 
     if conversation.title == DEFAULT_CONVERSATION_TITLE:
         conversation.title = _title_from_prompt(content)
@@ -384,8 +389,9 @@ def send_message(conversation: SystemAgentChatConversation, content: str) -> Sys
     )
     db.session.add(user_message)
     db.session.add(assistant_message)
-    db.session.commit()
-    _chat_queue.put(assistant_message.id)
+    db.session.flush()
+    message_id = assistant_message.id
+    register_after_commit(lambda: _chat_queue.put(message_id))
     db.session.refresh(conversation)
     return conversation
 
