@@ -85,6 +85,14 @@ function filesFromDataTransfer(dataTransfer: DataTransfer): { files: File[]; ski
   return { files, skippedFolders };
 }
 
+function uploadErrorMessage(err: unknown): string {
+  if (typeof err === "object" && err !== null && "response" in err) {
+    const status = (err as { response?: { status?: number } }).response?.status;
+    if (status === 413) return "File is larger than 50 MB";
+  }
+  return userFacingApiError(err);
+}
+
 async function uploadWorkspaceFile(folder: string, file: File): Promise<string> {
   const body = new FormData();
   body.append("path", folder);
@@ -440,7 +448,7 @@ export default function AgentFilesPage() {
           try {
             uploadedPaths.push(await uploadWorkspaceFile(folder, file));
           } catch (err) {
-            failures.push(`${file.name}: ${userFacingApiError(err)}`);
+            failures.push(`${file.name}: ${uploadErrorMessage(err)}`);
           }
         }
         const openedSingle = uploadedPaths.length === 1 && failures.length === 0;
