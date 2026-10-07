@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api, userFacingApiError } from "@/api/client";
 import { FileEditorPane } from "@/components/files/FileEditorPane";
@@ -50,8 +50,57 @@ function filesQueryString(
   return qs ? `?${qs}` : "";
 }
 
+type PendingUpload = {
+  files: File[];
+  skippedFolders: boolean;
+};
+
 function formatCount(n: number, singular: string, plural: string): string {
   return `${n} ${n === 1 ? singular : plural}`;
+}
+
+function dragHasFiles(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types).includes("Files");
+}
+
+function filesFromDataTransfer(dataTransfer: DataTransfer): { files: File[]; skippedFolders: boolean } {
+  const items = Array.from(dataTransfer.items || []);
+  if (!items.length) {
+    return { files: Array.from(dataTransfer.files || []), skippedFolders: false };
+  }
+  const files: File[] = [];
+  let skippedFolders = false;
+  for (const item of items) {
+    if (item.kind !== "file") continue;
+    const entry = (
+      item as DataTransferItem & { webkitGetAsEntry?: () => { isDirectory: boolean } | null }
+    ).webkitGetAsEntry?.();
+    if (entry?.isDirectory) {
+      skippedFolders = true;
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  return { files, skippedFolders };
+}
+
+async function uploadWorkspaceFile(folder: string, file: File): Promise<string> {
+  const body = new FormData();
+  body.append("path", folder);
+  body.append("file", file, file.name);
+  const res = await api.post<{ path: string }>("/files/upload", body, {
+    headers: { "Content-Type": "multipart/form-data" },
+    transformRequest: [
+      (data, headers) => {
+        if (headers && typeof headers === "object" && "delete" in headers && typeof headers.delete === "function") {
+          headers.delete("Content-Type");
+        }
+        return data;
+      },
+    ],
+  });
+  return res.data.path;
 }
 
 function formatFolderSummary(entries: FileEntry[]): string {
@@ -156,6 +205,13 @@ export default function AgentFilesPage() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const uploadingRef = useRef(false);
+  const currentFolderRef = useRef(currentFolder);
   const [viewMode, setViewMode] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [textDirection, setTextDirection] = useState<TextDirection>(readTextDirection);
@@ -243,6 +299,10 @@ export default function AgentFilesPage() {
       setLoading(false);
     }
   }, [urlPath, urlEditMode, fetchFolder]);
+
+  useEffect(() => {
+    currentFolderRef.current = currentFolder;
+  }, [currentFolder]);
 
   useEffect(() => {
     syncFromUrl().catch(console.error);
@@ -367,8 +427,124 @@ export default function AgentFilesPage() {
     navigateWithQuery(path);
   };
 
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      if (!files.length || uploadingRef.current) return;
+      const folder = currentFolderRef.current;
+      uploadingRef.current = true;
+      setUploading(true);
+      const failures: string[] = [];
+      const uploadedPaths: string[] = [];
+      try {
+        for (const file of files) {
+          try {
+            uploadedPaths.push(await uploadWorkspaceFile(folder, file));
+          } catch (err) {
+            failures.push(`${file.name}: ${userFacingApiError(err)}`);
+          }
+        }
+        const openedSingle = uploadedPaths.length === 1 && failures.length === 0;
+        if (!openedSingle && uploadedPaths.length && currentFolderRef.current === folder) {
+          try {
+            setEntries(await fetchFolder(folder));
+          } catch (err) {
+            setNotice({ title: "Could not refresh the file list", message: userFacingApiError(err) });
+            return;
+          }
+        }
+        if (failures.length && uploadedPaths.length) {
+          setNotice({
+            title: "Some files were not uploaded",
+            message: `Uploaded ${uploadedPaths.length} of ${files.length}. ${failures.join(" ")}`,
+          });
+        } else if (failures.length) {
+          setNotice({ title: "Could not upload", message: failures.join(" ") });
+        } else if (openedSingle) {
+          setNotice({ title: "File uploaded", message: `Uploaded ${files[0].name}.` });
+        } else {
+          setNotice({
+            title: "Files uploaded",
+            message: `Uploaded ${formatCount(uploadedPaths.length, "file", "files")}.`,
+          });
+        }
+        if (openedSingle && currentFolderRef.current === folder) {
+          navigateWithQuery(uploadedPaths[0]);
+        }
+      } finally {
+        uploadingRef.current = false;
+        setUploading(false);
+        setPendingUpload(null);
+      }
+    },
+    [fetchFolder, navigateWithQuery],
+  );
+
+  const onFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    void uploadFiles(files);
+  };
+
+  const onSidebarDragEnter = (event: React.DragEvent) => {
+    if (!dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    if (!uploading && !pendingUpload && !loading) setDragOver(true);
+  };
+
+  const onSidebarDragOver = (event: React.DragEvent) => {
+    if (!dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = uploading || pendingUpload || loading ? "none" : "copy";
+  };
+
+  const onSidebarDragLeave = (event: React.DragEvent) => {
+    if (!dragHasFiles(event.dataTransfer)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragOver(false);
+  };
+
+  const onSidebarDrop = (event: React.DragEvent) => {
+    if (!dragHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragOver(false);
+    if (uploading || pendingUpload || loading) return;
+    const dropped = filesFromDataTransfer(event.dataTransfer);
+    if (!dropped.files.length) {
+      setNotice({
+        title: "Could not upload",
+        message: dropped.skippedFolders ? "Folders cannot be uploaded. Drop files instead." : "No files to upload.",
+      });
+      return;
+    }
+    setPendingUpload(dropped);
+  };
+
   const renderFileSidebar = () => (
-    <PanelCard className="flex flex-col">
+    <div
+      className="h-full"
+      onDragEnter={onSidebarDragEnter}
+      onDragOver={onSidebarDragOver}
+      onDragLeave={onSidebarDragLeave}
+      onDrop={onSidebarDrop}
+    >
+    <PanelCard className={cn("relative flex h-full flex-col", dragOver && "ring-2 ring-inset ring-slate-900")}>
+      {dragOver ? (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/80 text-sm font-medium text-slate-800">
+          Drop to upload
+        </div>
+      ) : null}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={onFileInputChange}
+      />
       <div className="border-b px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5 text-xs text-slate-600">
@@ -393,15 +569,27 @@ export default function AgentFilesPage() {
               );
             })}
           </nav>
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            title="Collapse files panel"
-            aria-label="Collapse files panel"
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-          >
-            <PanelLeftCloseIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              className="h-7 px-2 text-xs"
+              title="Upload files into this folder"
+              aria-busy={uploading}
+              disabled={loading || uploading || !!pendingUpload}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? "Uploading..." : "Upload"}
+            </Button>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              title="Collapse files panel"
+              aria-label="Collapse files panel"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            >
+              <PanelLeftCloseIcon />
+            </button>
+          </div>
         </div>
         {loading ? null : (
           <p className="mt-1 text-xs text-slate-500">{formatFolderSummary(entries)}</p>
@@ -505,6 +693,7 @@ export default function AgentFilesPage() {
         </ul>
       )}
     </PanelCard>
+    </div>
   );
 
   return (
@@ -640,6 +829,44 @@ export default function AgentFilesPage() {
       </SplitPanelLayout>
 
       <ConfirmModal
+        open={!!pendingUpload}
+        onOpenChange={(open) => !open && !uploading && setPendingUpload(null)}
+        title={pendingUpload && pendingUpload.files.length === 1 ? "Upload file?" : "Upload files?"}
+        confirmLabel={uploading ? "Uploading..." : "Upload"}
+        busy={uploading}
+        description={
+          pendingUpload ? (
+            <div className="space-y-2">
+              <p>
+                {pendingUpload.files.length === 1 ? (
+                  <>
+                    Upload <strong>{pendingUpload.files[0].name}</strong> into{" "}
+                    <strong>{currentFolder || ".workspace"}</strong>?
+                  </>
+                ) : (
+                  <>
+                    Upload <strong>{formatCount(pendingUpload.files.length, "file", "files")}</strong> into{" "}
+                    <strong>{currentFolder || ".workspace"}</strong>?
+                  </>
+                )}
+              </p>
+              {pendingUpload.files.length > 1 ? (
+                <ul className="list-disc space-y-0.5 ps-5">
+                  {pendingUpload.files.slice(0, 8).map((file, index) => (
+                    <li key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>{file.name}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {pendingUpload.files.length > 8 ? <p>and {pendingUpload.files.length - 8} more</p> : null}
+              {pendingUpload.skippedFolders ? <p>Folders in the drop were skipped.</p> : null}
+            </div>
+          ) : null
+        }
+        onConfirm={() => {
+          if (pendingUpload) void uploadFiles(pendingUpload.files);
+        }}
+      />
+      <ConfirmModal
         open={!!deleteTarget}
         onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}
         title={deleteTarget?.is_dir ? "Delete folder?" : "Delete file?"}
@@ -718,7 +945,7 @@ export default function AgentFilesPage() {
         open={!!notice}
         onOpenChange={(open) => !open && setNotice(null)}
         title={notice?.title || "Notice"}
-        description={notice ? <p>{notice.message}</p> : null}
+        description={notice ? <p className="whitespace-pre-wrap">{notice.message}</p> : null}
       />
     </div>
   );

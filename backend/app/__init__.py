@@ -107,6 +107,8 @@ def create_app() -> Flask:
             return None
         if request.path.startswith("/api/webhooks/"):
             return None
+        if request.method == "POST" and request.path == "/api/files/upload":
+            return None
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             if request.content_length and request.mimetype != "application/json":
                 return jsonify({"error": "Content-Type must be application/json"}), 415
@@ -139,6 +141,7 @@ def create_app() -> Flask:
                     "/api/whatsapp/conversations": {"get": {}},
                     "/api/emails": {"get": {}, "patch": {}},
                     "/api/files": {"get": {}, "post": {}, "put": {}, "delete": {}},
+                    "/api/files/upload": {"post": {}},
                 },
             }
         )

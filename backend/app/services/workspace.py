@@ -210,6 +210,9 @@ def list_path(path: str = "") -> dict:
     return {"path": rel, "is_dir": True, "children": children}
 
 
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
 def write_file(path: str, content: str) -> dict:
     target = safe_path(path)
     if target.exists() and target.is_dir():
@@ -221,6 +224,24 @@ def write_file(path: str, content: str) -> dict:
         raise APIClientError("Parent directory does not exist", 400)
     target.write_text(content, encoding="utf-8")
     return {"path": str(target.relative_to(workspace_root())), "is_dir": False}
+
+
+def write_bytes(path: str, content: bytes) -> dict:
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise APIClientError("File is larger than 50 MB", 400)
+    target = safe_path(path)
+    if target.exists() and target.is_dir():
+        raise APIClientError("A folder with that name already exists", 400)
+    if target.exists():
+        raise APIClientError("A file with that name already exists", 400)
+    parent = target.parent
+    root = workspace_root()
+    if not str(parent).startswith(str(root)):
+        raise APIClientError("Invalid path", 400)
+    if not parent.exists() or not parent.is_dir():
+        raise APIClientError("Parent directory does not exist", 400)
+    target.write_bytes(content)
+    return {"path": str(target.relative_to(root)), "name": target.name, "is_dir": False, **_file_stat_fields(target)}
 
 
 def rename_file(old_path: str, new_path: str) -> dict:

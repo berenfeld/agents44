@@ -14,6 +14,7 @@ import {
   formatFileSize,
   formatModified,
   isEditable,
+  isImageFile,
   isPdfFile,
   isTextOrMarkdownFile,
   type TextDirection,
@@ -110,6 +111,7 @@ export function FileEditorPane({
   className?: string;
 }) {
   const pdf = isPdfFile(path);
+  const image = isImageFile(path);
   const editable = isEditable(path);
   const textOrMarkdown = isTextOrMarkdownFile(path);
   const contentDir = textOrMarkdown ? textDirection : "ltr";
@@ -154,9 +156,23 @@ export function FileEditorPane({
       );
     }
 
+    if (image) {
+      return (
+        <img
+          key={path}
+          src={fileRawUrl(path)}
+          alt={fileName(path)}
+          className="max-h-[70vh] max-w-full rounded border bg-slate-50 object-contain"
+        />
+      );
+    }
+
     const ext = extension(path);
 
     if (viewMode) {
+      if (!editable && !content) {
+        return <p className="text-sm text-slate-500">This file cannot be previewed in the editor. Use download to save a copy.</p>;
+      }
       if (ext === "md" || ext === "markdown") {
         return (
           <div
@@ -224,12 +240,12 @@ export function FileEditorPane({
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {textOrMarkdown ? <TextDirectionToggle value={textDirection} onChange={onTextDirectionChange} /> : null}
-          {pdf ? (
+          {!editable ? (
             <a
               href={fileRawUrl(path, true)}
               download={fileName(path)}
-              title="Download PDF"
-              aria-label="Download PDF"
+              title="Download file"
+              aria-label="Download file"
               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
             >
               <DownloadIcon />

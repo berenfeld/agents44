@@ -1,3 +1,5 @@
+import mimetypes
+
 from flask import Blueprint, jsonify, request, send_file
 
 from app.auth import login_required
@@ -5,13 +7,27 @@ from app.errors import APIClientError, api_endpoint
 from app.models import SystemAgent, SystemDepartment
 from app.services.workspace import (
     COMMON_INPUT,
+    MAX_UPLOAD_BYTES,
     delete_path,
     list_path,
     protected_path_error,
     rename_file,
     workspace_file_path,
+    write_bytes,
     write_file,
 )
+
+_PREVIEW_MIMETYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
 
 files_bp = Blueprint("files", __name__)
 
@@ -29,13 +45,14 @@ def get_files():
 @login_required
 def get_raw_file():
     target = workspace_file_path(request.args.get("path", ""))
-    if target.suffix.lower() != ".pdf":
-        raise APIClientError("Only PDF files can be previewed or downloaded this way", 400)
+    suffix = target.suffix.lower()
+    mimetype = _PREVIEW_MIMETYPES.get(suffix) or mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     download = request.args.get("download") == "1"
+    inline = suffix in _PREVIEW_MIMETYPES and not download
     return send_file(
         target,
-        mimetype="application/pdf",
-        as_attachment=download,
+        mimetype=mimetype,
+        as_attachment=not inline,
         download_name=target.name,
         max_age=0,
     )
@@ -51,6 +68,26 @@ def create_file():
     if not path:
         raise APIClientError("path is required", 400)
     return jsonify(write_file(path, content)), 201
+
+
+@files_bp.post("/upload")
+@api_endpoint
+@login_required
+def upload_file():
+    uploaded = request.files.get("file")
+    if uploaded is None:
+        raise APIClientError("file is required", 400)
+    filename = (uploaded.filename or "").strip()
+    if not filename:
+        raise APIClientError("file is required", 400)
+    if "/" in filename or "\\" in filename or "\x00" in filename or filename in {".", ".."}:
+        raise APIClientError("Invalid file name", 400)
+    folder = str(request.form.get("path") or "").strip().strip("/")
+    relative = f"{folder}/{filename}" if folder else filename
+    content = uploaded.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise APIClientError("File is larger than 50 MB", 400)
+    return jsonify(write_bytes(relative, content)), 201
 
 
 @files_bp.put("")

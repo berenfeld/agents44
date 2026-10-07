@@ -80,6 +80,12 @@ export function isPdfFile(path: string) {
   return extension(path) === "pdf";
 }
 
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico"]);
+
+export function isImageFile(path: string) {
+  return IMAGE_EXTENSIONS.has(extension(path));
+}
+
 export function readTextDirection(): TextDirection {
   try {
     return window.localStorage.getItem(TEXT_DIRECTION_STORAGE_KEY) === "rtl" ? "rtl" : "ltr";
